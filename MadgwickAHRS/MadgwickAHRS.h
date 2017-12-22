@@ -22,8 +22,11 @@ extern volatile float q0, q1, q2, q3;	// quaternion of sensor frame relative to 
 //---------------------------------------------------------------------------------------------------
 // Function declarations
 
-void MadgwickAHRSupdate(float gx, float gy, float gz, float ax, float ay, float az, float mx, float my, float mz);
-void MadgwickAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, float az);
+void MadgwickAHRSupdate(float& angle_x_filtered, float& angle_y_filtered, float& angle_z_filtered, float gx, float gy, float gz, float ax, float ay, float az, float mx, float my, float mz);
+void MadgwickAHRSupdateIMU(float& angle_x_filtered, float& angle_y_filtered, float& angle_z_filtered, float gx, float gy, float gz, float ax, float ay, float az);
+
+void getGravity(float& gravity_x, float& gravity_y, float& gravity_z, float q0, float q1, float q2, float q3);
+void getYawPitchRoll(float& angle_x_filtered, float& angle_y_filtered, float& angle_z_filtered, float q0, float q1, float q2, float q3, float gravity_x, float gravity_y, float gravity_z);
 
 #endif
 //=====================================================================================================

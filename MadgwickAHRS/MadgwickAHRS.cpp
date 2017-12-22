@@ -41,7 +41,7 @@ float invSqrt(float x);
 //---------------------------------------------------------------------------------------------------
 // AHRS algorithm update
 
-void MadgwickAHRSupdate(float gx, float gy, float gz, float ax, float ay, float az, float mx, float my, float mz) {
+void MadgwickAHRSupdate(float& angle_x_filtered, float& angle_y_filtered, float& angle_z_filtered, float gx, float gy, float gz, float ax, float ay, float az, float mx, float my, float mz) {
 	float recipNorm;
 	float s0, s1, s2, s3;
 	float qDot1, qDot2, qDot3, qDot4;
@@ -50,7 +50,7 @@ void MadgwickAHRSupdate(float gx, float gy, float gz, float ax, float ay, float 
 
 	// Use IMU algorithm if magnetometer measurement invalid (avoids NaN in magnetometer normalisation)
 	if((mx == 0.0f) && (my == 0.0f) && (mz == 0.0f)) {
-		MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
+		MadgwickAHRSupdateIMU(angle_x_filtered, angle_y_filtered, angle_z_filtered, gx, gy, gz, ax, ay, az);
 		return;
 	}
 
@@ -140,7 +140,7 @@ void MadgwickAHRSupdate(float gx, float gy, float gz, float ax, float ay, float 
 //---------------------------------------------------------------------------------------------------
 // IMU algorithm update
 
-void MadgwickAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, float az) {
+void MadgwickAHRSupdateIMU(float& angle_x_filtered, float& angle_y_filtered, float& angle_z_filtered, float gx, float gy, float gz, float ax, float ay, float az) {
 	float recipNorm;
 	float s0, s1, s2, s3;
 	float qDot1, qDot2, qDot3, qDot4;
@@ -206,6 +206,12 @@ void MadgwickAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, flo
 	q1 *= recipNorm;
 	q2 *= recipNorm;
 	q3 *= recipNorm;
+	
+	
+	static float gravity_x, gravity_y, gravity_z;
+	
+	getGravity(gravity_x, gravity_y, gravity_z, q0, q1, q2, q3);
+	getYawPitchRoll(angle_x_filtered, angle_y_filtered, angle_z_filtered, q0, q1, q2, q3, gravity_x, gravity_y, gravity_z);
 }
 
 //---------------------------------------------------------------------------------------------------
@@ -220,6 +226,21 @@ float invSqrt(float x) {
 	y = *(float*)&i;
 	y = y * (1.5f - (halfx * y * y));
 	return y;
+}
+
+void getGravity(float& gravity_x, float& gravity_y, float& gravity_z, float q0, float q1, float q2, float q3) {
+	gravity_x = 2 * (q1 * q3 - q0 * q2);
+	gravity_y = 2 * (q0 * q1 + q2 * q3);
+	gravity_z = q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3;
+}
+
+void getYawPitchRoll(float& angle_x_filtered, float& angle_y_filtered, float& angle_z_filtered, float q0, float q1, float q2, float q3, float gravity_x, float gravity_y, float gravity_z) {
+	// roll: (tilt left/right, about X axis)
+	angle_x_filtered = atan(gravity_y / sqrt(gravity_x * gravity_x + gravity_z * gravity_z));
+	// pitch: (nose up/down, about Y axis)
+	angle_y_filtered = atan(gravity_x / sqrt(gravity_y * gravity_y + gravity_z * gravity_z));
+	// yaw: (about Z axis)
+	angle_z_filtered = atan2(2 * q1 * q2 - 2 * q0 * q3, 2 * q0 * q0 + 2 * q1 * q1 - 1);
 }
 
 //====================================================================================================
