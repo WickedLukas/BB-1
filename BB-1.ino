@@ -77,10 +77,10 @@ const float ACCEL_SENS = pow(2, 16) / (4 * pow(2, ACCEL_RANGE)) / G;
 const float GYRO_SENS = pow(2, 16) / (500 * pow(2, GYRO_RANGE));
 
 // encoder resolution in counts per revolution
-const float ENCODER_RESOLUTION = 816.335;
+const int16_t ENCODER_RESOLUTION = 816;
 
 // wheel diameter in mm
-const int16_t WHEEL_DIAMETER = 120;
+const int16_t WHEEL_DIAMETER = 80;
 
 // MPU raw measurements
 int16_t ax, ay, az;
@@ -521,8 +521,8 @@ void sensor_update() {
 // calculate velocities
 void calc_velocities(float& velocity_M1, float& velocity_M2)
 {
-	velocity_M1 = enc_count_M1 / ENCODER_RESOLUTION * WHEEL_DIAMETER * PI / dT;
-	velocity_M2 = enc_count_M2 / ENCODER_RESOLUTION * WHEEL_DIAMETER * PI / dT;
+	velocity_M1 = (float)enc_count_M1 / ENCODER_RESOLUTION * WHEEL_DIAMETER * PI / dT;
+	velocity_M2 = (float)enc_count_M2 / ENCODER_RESOLUTION * WHEEL_DIAMETER * PI / dT;
 }
 
 // calculate accel x and y angles in degrees
