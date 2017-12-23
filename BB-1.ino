@@ -1,5 +1,5 @@
 /*
-* balance_bot.ino
+* BB-1.ino
 *
 * Created: 05.11.2016
 * Author: Lukas
