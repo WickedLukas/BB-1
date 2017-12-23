@@ -204,7 +204,7 @@ void setup() {
 	while (!Serial); // wait for Leonardo eNUMeration, others continue immediately
 	#endif
 
-	// NOTE: 8MHz or slower host processors, like the Teensy @ 3.3v or Ardunio
+	// NOTE: 8MHz or slower host processors, like the Teensy @ 3.3v or Arduino
 	// Pro Mini running at 3.3v, cannot handle this baud rate reliably due to
 	// the baud timing being too misaligned with processor ticks. You must use
 	// 38400 or slower in these cases, or use some kind of external separate
