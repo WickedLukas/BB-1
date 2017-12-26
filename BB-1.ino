@@ -101,7 +101,7 @@ KalmanFilter kalmanFilter_x(1, 0.1, 0.05, 0.1, 0.001, 0);	// previous parameters
 static boolean tunePID = true;
 
 // PID values for angle controller
-float P_angle = 3;
+float P_angle = 30;
 float I_angle = 0;
 float D_angle = 0;
 
@@ -111,8 +111,8 @@ float I_velovcity = 0;
 float D_velovcity = 0;
 
 // PID controller classes for angle (mpu) and velocity (encoder)
-PID_controller pid_angle_x_1(P_angle, I_angle, D_angle, 0, 5, 255);
-PID_controller pid_angle_x_2(P_angle, I_angle, D_angle, 0, 0, 255);
+PID_controller pid_angle_x_1(P_angle, I_angle, D_angle, 0, 17, 255);
+PID_controller pid_angle_x_2(P_angle, I_angle, D_angle, 0, 15, 255);
 PID_controller pid_velocity_y_1(P_velovcity, I_velovcity, D_velovcity, 0, 0, 45);
 PID_controller pid_velocity_y_2(P_velovcity, I_velovcity, D_velovcity, 0, 0, 45);
 
@@ -341,8 +341,7 @@ void loop() {
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	// NAVIGATION
 	
-	if (tunePID)
-	{
+	if (tunePID) {
 		P_angle = (float) constrain(analogRead(P_PIN) - 10, 0, 999) / 10;
 		I_angle = (float) constrain(analogRead(I_PIN) - 10, 0, 999) / 10;
 		D_angle = (float) constrain(analogRead(D_PIN) - 10, 0, 999) / 100;
@@ -353,7 +352,7 @@ void loop() {
 		pid_angle_x_2.set_K_p(P_angle);
 		pid_angle_x_2.set_K_i(I_angle);
 		pid_angle_x_2.set_K_d(D_angle);
-	}	
+	}
 	
 	// failsafe if angle is too high
 	if (abs(angle_x_KF) > 40) {
@@ -421,28 +420,28 @@ void loop() {
 	// SERIAL DEBUG
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	
-	// DEBUG_PRINT(ax); DEBUG_PRINT("\t"); DEBUG_PRINT(ax); DEBUG_PRINT("\t"); DEBUG_PRINTLN(az);
-	// DEBUG_PRINT(gx); DEBUG_PRINT("\t"); DEBUG_PRINT(gy); DEBUG_PRINT("\t"); DEBUG_PRINTLN(gz);
+	//DEBUG_PRINT(ax); DEBUG_PRINT("\t"); DEBUG_PRINT(ax); DEBUG_PRINT("\t"); DEBUG_PRINTLN(az);
+	//DEBUG_PRINT(gx); DEBUG_PRINT("\t"); DEBUG_PRINT(gy); DEBUG_PRINT("\t"); DEBUG_PRINTLN(gz);
 	
-	// DEBUG_PRINT(enc_count_M1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(enc_count_M2);
+	//DEBUG_PRINT(enc_count_M1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(enc_count_M2);
 	
-	// DEBUG_PRINTLN(dt);
+	//DEBUG_PRINTLN(dt);
 	
-	// DEBUG_PRINTLN(line_1);
-	// DEBUG_PRINTLN(line_2);
-	// DEBUG_PRINTLN(line_3);
+	//DEBUG_PRINTLN(line_1);
+	//DEBUG_PRINTLN(line_2);
+	//DEBUG_PRINTLN(line_3);
 	
-	// DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(velocity_M1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_M2);
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(velocity_M1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_M2);
 	
-	// DEBUG_PRINT(dt); DEBUG_PRINT("\t"); DEBUG_PRINTLN(mpu_update_time);
-	DEBUG_PRINTLN(angle_x_KF);
+	//DEBUG_PRINT(dt); DEBUG_PRINT("\t"); DEBUG_PRINTLN(mpu_update_time);
+	//DEBUG_PRINTLN(angle_x_KF);
 	
-	// DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINTLN(cv_M1_pwm);
-	// DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(mv_M1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(mv_M2);
-	// DEBUG_PRINT(md.getM1Current()); DEBUG_PRINT("\t"); DEBUG_PRINTLN(md.getM2Current());
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINTLN(cv_M1_pwm);
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(mv_M1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(mv_M2);
+	//DEBUG_PRINT(md.getM1Current()); DEBUG_PRINT("\t"); DEBUG_PRINTLN(md.getM2Current());
 	
 	// Send data to "Processing" for visualization
-	// sendSerial(dt, angle_x_gyro, angle_y_gyro, angle_z_gyro, angle_x_accel, angle_y_accel, angle_x_CF, angle_y_CF, angle_x_KF, angle_y_KF);
+	//sendSerial(dt, angle_x_gyro, angle_y_gyro, angle_z_gyro, angle_x_accel, angle_y_accel, angle_x_CF, angle_y_CF, angle_x_KF, angle_y_KF);
 	
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	// SERIAL DEBUG
@@ -450,33 +449,12 @@ void loop() {
 }
 
 // read sensor data and measure update time
-void sensor_update() {	
-	// print error when interrupts happen too early or too late
-	if (abs((dt * 100) / mpu_update_time - 100) > 3) {
-		if (!first) {
-			if (((dt * 100) / mpu_update_time - 100) > 3) {
-				//DEBUG_PRINTLN("Error: MPU interrupt too early!");
-			}
-			else {
-				//DEBUG_PRINTLN("Warning: MPU interrupt too late!");
-			}
-			
-			//DEBUG_PRINT("Expected: "); DEBUG_PRINT(mpu_update_time); DEBUG_PRINT(" us"); DEBUG_PRINT("\t"); DEBUG_PRINT("Measured: "); DEBUG_PRINT(dt); DEBUG_PRINTLN(" us");
-			
-			//while(1);
-			
-			// reset interrupt status
-			// mpuInterrupt = false;
-			// mpuIntStatus = mpu.getIntStatus();
-			// first = true;
-		}
-	}
-	
-	while (!mpuInterrupt) {
-		// wait for the next interrupt
-	}
-	
+void sensor_update() {
 	if (first)  {
+		while (!mpuInterrupt) {
+			// wait for the next interrupt
+		}
+		
 		// reset interrupt flag and get INT_STATUS byte
 		mpuInterrupt = false;
 		mpuIntStatus = mpu.getIntStatus();
@@ -493,10 +471,28 @@ void sensor_update() {
 		enc_count_M2 = Wire.read();
 
 		first = false;
-
-		while (!mpuInterrupt) {
-			// wait for the next interrupt
+	}
+	/*else if (abs((dt * 100) / mpu_update_time - 100) > 3) {
+		// print error when interrupts happen too early or too late
+		if (((dt * 100) / mpu_update_time - 100) > 3) {
+			DEBUG_PRINTLN("Error: MPU interrupt too late!");
 		}
+		else {
+			DEBUG_PRINTLN("Warning: MPU interrupt too early!");
+		}
+		
+		DEBUG_PRINT("Expected: "); DEBUG_PRINT(mpu_update_time); DEBUG_PRINT(" us"); DEBUG_PRINT("\t"); DEBUG_PRINT("Measured: "); DEBUG_PRINT(dt); DEBUG_PRINTLN(" us");
+			
+		while(1);
+		
+		// reset interrupt status
+		//mpuInterrupt = false;
+		//mpuIntStatus = mpu.getIntStatus();
+		//first = true;
+	}*/
+	
+	while (!mpuInterrupt) {
+		// wait for the next interrupt
 	}
 
 	// reset interrupt flag and get INT_STATUS byte
@@ -519,8 +515,7 @@ void sensor_update() {
 }
 
 // calculate velocities
-void calc_velocities(float& velocity_M1, float& velocity_M2)
-{
+void calc_velocities(float& velocity_M1, float& velocity_M2) {
 	velocity_M1 = (float)enc_count_M1 / ENCODER_RESOLUTION * WHEEL_DIAMETER * PI / dT;
 	velocity_M2 = (float)enc_count_M2 / ENCODER_RESOLUTION * WHEEL_DIAMETER * PI / dT;
 }
@@ -605,7 +600,7 @@ void printDisplay(int8_t mode, float velocity_M1, float velocity_M2, float angle
 					lcd.print(".");
 					lcd.setCursor (0, 3);
 					lcd.print("D:");
-					lcd.setCursor (4, 3);
+					lcd.setCursor (5, 3);
 					lcd.print(".");
 					break;
 			default: break;
@@ -745,7 +740,7 @@ void printDisplay(int8_t mode, float velocity_M1, float velocity_M2, float angle
 					}
 					lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
 					
-					lcd.setCursor (3, 3);
+					lcd.setCursor (4, 3);
 					LCD_temp2 = round(D_angle * 100);
 					LCD_temp1 = LCD_temp2 / 100;
 					LCD_temp2 = LCD_temp2 % 100;
