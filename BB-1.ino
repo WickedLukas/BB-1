@@ -14,7 +14,7 @@
 #include "DualMC33926MotorShield.h"
 #include "LiquidCrystal_I2C.h"
 
-// #include "complementary_filter.h"
+//#include "complementary_filter.h"
 #include "kalman_filter.h"
 #include "PID_controller.h"
 
@@ -29,7 +29,7 @@
 // AD0 low = 0x68 (default for InvenSense evaluation board)
 // AD0 high = 0x69
 MPU6050 mpu;
-// MPU6050 mpu(0x69); // <-- use for AD0 high
+//MPU6050 mpu(0x69); // <-- use for AD0 high
 
 // set the LCD address to 0x3F for a 20 chars 4 line display and
 // set the pins on the I2C chip used for LCD connections:
@@ -61,10 +61,6 @@ int32_t dt = 0;
 // measured MPU update time in seconds
 float dT = 0;
 
-// variables to measure MPU update time
-uint32_t t0;
-uint32_t t;
-
 // range of accelerometer and gyro
 const int16_t ACCEL_RANGE = MPU6050_ACCEL_FS_4;
 const int16_t GYRO_RANGE = MPU6050_GYRO_FS_1000;
@@ -77,10 +73,10 @@ const float ACCEL_SENS = pow(2, 16) / (4 * pow(2, ACCEL_RANGE)) / G;
 const float GYRO_SENS = pow(2, 16) / (500 * pow(2, GYRO_RANGE));
 
 // encoder resolution in counts per revolution
-const int16_t ENCODER_RESOLUTION = 816;
+const int16_t ENCODER_RESOLUTION = 960;
 
 // wheel diameter in mm
-const int16_t WHEEL_DIAMETER = 80;
+const int16_t WHEEL_DIAMETER = 120;
 
 // MPU raw measurements
 int16_t ax, ay, az;
@@ -101,26 +97,26 @@ KalmanFilter kalmanFilter_x(1, 0.1, 0.05, 0.1, 0.001, 0);	// previous parameters
 static boolean tunePID = true;
 
 // PID values for angle controller
-float P_angle = 30;
+float P_angle = 10;
 float I_angle = 0;
 float D_angle = 0;
 
 // PID values for velocity controller
-float P_velovcity = 0;
-float I_velovcity = 0;
+float P_velovcity = 0.015;
+float I_velovcity = 0.004;
 float D_velovcity = 0;
 
 // PID controller classes for angle (mpu) and velocity (encoder)
-PID_controller pid_angle_x_1(P_angle, I_angle, D_angle, 0, 17, 255);
+PID_controller pid_angle_x_1(P_angle, I_angle, D_angle, 0, 15, 255);
 PID_controller pid_angle_x_2(P_angle, I_angle, D_angle, 0, 15, 255);
-PID_controller pid_velocity_y_1(P_velovcity, I_velovcity, D_velovcity, 0, 0, 45);
-PID_controller pid_velocity_y_2(P_velovcity, I_velovcity, D_velovcity, 0, 0, 45);
+PID_controller pid_velocity_y_1(P_velovcity, I_velovcity, D_velovcity, 0, 0, 40);
+PID_controller pid_velocity_y_2(P_velovcity, I_velovcity, D_velovcity, 0, 0, 40);
 
 // motor controller class
 DualMC33926MotorShield md(11, 9, A0, 8, 10, A1, 4, 12);	// remap M1DIR from pin 7 to pin 11
 
 // uncomment "PERFORM_MPU_CALIBRATION" if you want to calibrate the MPU
-// #define PERFORM_MPU_CALIBRATION
+//#define PERFORM_MPU_CALIBRATION
 
 #define MPU_INTERRUPT_PIN 7
 
@@ -169,7 +165,7 @@ void dataReady() {
 // Debug output is now working even on ATMega328P MCUs (e.g. Arduino Uno)
 // after moving string constants to flash memory storage using the F()
 // compiler macro (Arduino IDE 1.0+ required).
-#define DEBUG
+//#define DEBUG
 
 #ifdef DEBUG
 #define DEBUG_PRINT(x) Serial.print(x)
@@ -279,9 +275,9 @@ void loop() {
 	calc_accelAngles(angle_x_accel, angle_y_accel);
 	
 	// gyro angles
-	// static float angle_x_gyro = 0, angle_y_gyro = 0, angle_z_gyro = 90;
+	//static float angle_x_gyro = 0, angle_y_gyro = 0, angle_z_gyro = 90;
 	// calculate gyro x, y and z angles in degrees (not necessary for filters)
-	// calc_gyroAngles(angle_x_gyro, angle_y_gyro, angle_z_gyro);
+	//calc_gyroAngles(angle_x_gyro, angle_y_gyro, angle_z_gyro);
 	
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	// COMPLEMENTARY FILTER
@@ -331,9 +327,7 @@ void loop() {
 	// MADGWICK FILTER
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	
-	// update old values
-	t0 = t;
-	
+	// update last gyro raw measurements
 	gx0 = gx;
 	gy0 = gy;
 	gz0 = gz;
@@ -381,9 +375,6 @@ void loop() {
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	// CASCADED PID CONTROL
 	
-	// velocity
-	static float velocity_y_1 = 0;
-	static float velocity_y_2 = 0;
 	// velocity setpoint
 	static float velocity_y_sp = 0;
 	
@@ -396,12 +387,14 @@ void loop() {
 	static float mv_M2;
 	
 	// calculate angle setpoint
-	angle_x_sp_1 = pid_velocity_y_1.get_mv(velocity_y_sp, velocity_y_1, dT);
-	angle_x_sp_2 = pid_velocity_y_2.get_mv(velocity_y_sp, velocity_y_2, dT);
+	angle_x_sp_1 = pid_velocity_y_1.get_mv(velocity_y_sp, (velocity_M1 + velocity_M2)/2, dT);
+	angle_x_sp_2 = pid_velocity_y_2.get_mv(velocity_y_sp, (velocity_M1 + velocity_M2)/2, dT);
 	
 	// calculate control variables
 	mv_M1 = pid_angle_x_1.get_mv(angle_x_sp_1, angle_x_KF, dT);
 	mv_M2 = pid_angle_x_2.get_mv(angle_x_sp_2, angle_x_KF, dT);
+	
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_sp_1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_M1);
 	
 	// CASCADED PID CONTROL
 	//--------------------------------------------------------------------------------------------------------------------------------------------
@@ -450,6 +443,10 @@ void loop() {
 
 // read sensor data and measure update time
 void sensor_update() {
+	// variables to measure MPU update time
+	static uint32_t t0 = 0;
+	static uint32_t t = 0;
+	
 	if (first)  {
 		while (!mpuInterrupt) {
 			// wait for the next interrupt
@@ -512,6 +509,9 @@ void sensor_update() {
 
 	dt = (t - t0);	// in us
 	dT = float(dt) / 1000000;	// in s
+	
+	// update last MPU update time measurement
+	t0 = t;
 }
 
 // calculate velocities
@@ -618,7 +618,7 @@ void printDisplay(int8_t mode, float velocity_M1, float velocity_M2, float angle
 		LCD_time = 0;
 		switch (mode)
 		{
-			case 1:	/*				
+			case 1:	
 					lcd.setCursor (5, 1);
 					LCD_temp2 = round(velocity_M1 / 100);
 					LCD_temp1 = abs(LCD_temp2 / 10);
@@ -669,8 +669,8 @@ void printDisplay(int8_t mode, float velocity_M1, float velocity_M2, float angle
 						lcd.print(" ");
 					}
 					lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
-					*/
-			
+
+					
 					break;
 					
 					/*	
