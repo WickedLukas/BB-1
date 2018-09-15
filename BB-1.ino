@@ -41,6 +41,18 @@ LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
 
 boolean first = true;
 
+// remote connection status
+boolean remoteConnection = false;
+
+// specifies if new data from remote can be requested
+boolean requestRemoteData = true;
+
+// specifies timeout for bluetooth communication with BB1-Remote in microseconds
+const int32_t REMOTE_TIMEOUT = 100000;
+
+// maximum number of chars sent in one serial message
+const byte maxChars = 32;
+
 const float RAD2DEG = 4068 / 71;
 
 // acceleration of gravity
@@ -72,11 +84,27 @@ const int16_t G_LSB = pow(2, 16) / (4 * pow(2, ACCEL_RANGE));
 const float ACCEL_SENS = pow(2, 16) / (4 * pow(2, ACCEL_RANGE)) / G;
 const float GYRO_SENS = pow(2, 16) / (500 * pow(2, GYRO_RANGE));
 
+// maximum motor RPM
+const int16_t MOTOR_RPM = 350;
+
 // encoder resolution in counts per revolution
 const int16_t ENCODER_RESOLUTION = 960;
 
-// wheel diameter in mm
-const int16_t WHEEL_DIAMETER = 120;
+// tire diameter in mm
+const int16_t TIRE_DIAMETER = 120;
+
+// wheelbase in mm
+const int16_t WHEELBASE = 235;
+
+// maximum velocity
+const float VELOCITY_MAX = PI * MOTOR_RPM * TIRE_DIAMETER / 60;
+
+// velocity limit
+const float VELOCITY_LIMIT = 0.2 * VELOCITY_MAX;
+
+// velocities setpoints received from BB-1_Remote
+float velocity_y_sp = 0;
+float deltaVelocity_y_sp = 0;
 
 // MPU raw measurements
 int16_t ax, ay, az;
@@ -97,7 +125,7 @@ KalmanFilter kalmanFilter_x(1, 0.1, 0.05, 0.1, 0.001, 0);	// previous parameters
 static boolean tunePID = true;
 
 // PID values for angle controller
-float P_angle = 10;
+float P_angle = 8;
 float I_angle = 0;
 float D_angle = 0;
 
@@ -106,11 +134,15 @@ float P_velovcity = 0.015;
 float I_velovcity = 0.004;
 float D_velovcity = 0;
 
+// PID values for delta velocity controller
+float P_deltaVelovcity = 0;
+float I_deltaVelovcity = 0;
+float D_deltaVelovcity = 0;
+
 // PID controller classes for angle (mpu) and velocity (encoder)
-PID_controller pid_angle_x_1(P_angle, I_angle, D_angle, 0, 15, 255);
-PID_controller pid_angle_x_2(P_angle, I_angle, D_angle, 0, 15, 255);
-PID_controller pid_velocity_y_1(P_velovcity, I_velovcity, D_velovcity, 0, 0, 40);
-PID_controller pid_velocity_y_2(P_velovcity, I_velovcity, D_velovcity, 0, 0, 40);
+PID_controller pid_angle_x(P_angle, I_angle, D_angle, 0, 15, 255);
+PID_controller pid_velocity_y(P_velovcity, I_velovcity, D_velovcity, 0, 0, 50);
+PID_controller pid_deltaVelocity_y(P_deltaVelovcity, I_deltaVelovcity, D_deltaVelovcity, 0, 0, 0.5);
 
 // motor controller class
 DualMC33926MotorShield md(11, 9, A0, 8, 10, A1, 4, 12);	// remap M1DIR from pin 7 to pin 11
@@ -125,10 +157,25 @@ DualMC33926MotorShield md(11, 9, A0, 8, 10, A1, 4, 12);	// remap M1DIR from pin 
 #define I_PIN A4
 #define D_PIN A5
 
+// orders for communication
+#define HELLO_BB1 'B'
+#define HELLO_BB1_REMOTE 'R'
+#define VELOCITY 'V'
+#define CONTROL 'C'
+
 bool blinkState = false;
 
 // MPU interrupt status byte
 uint8_t mpuIntStatus;
+
+// update from BB-1_Remote
+void remote_update(const char order);
+
+// get data from BB-1_Remote
+boolean getData(const char order, char *receivedChars);
+
+// update velocity y setpoints
+void velocity_y_sp_update(char *receivedChars);
 
 // read sensor data and measure update time
 void sensor_update();
@@ -199,6 +246,10 @@ void setup() {
 	Serial.begin(115200);
 	while (!Serial); // wait for Leonardo eNUMeration, others continue immediately
 	#endif
+	
+	// initialize serial1 communication for BB-1_Remote through HC-05 bluetooth modules
+	Serial1.begin(115200);
+	while (!Serial1); // wait for Leonardo eNUMeration, others continue immediately
 
 	// NOTE: 8MHz or slower host processors, like the Teensy @ 3.3v or Arduino
 	// Pro Mini running at 3.3v, cannot handle this baud rate reliably due to
@@ -211,8 +262,6 @@ void setup() {
 	
 	// initialize LCD (seems to negatively affect interrupts)
 	lcd.begin(20, 4);
-	
-	// initialize bluetooth module
 	
 	// initialize MPU
 	mpu.initialize();
@@ -260,7 +309,10 @@ void setup() {
 }
 
 
-void loop() {	
+void loop() {
+	// update from BB-1_Remote
+	remote_update(VELOCITY);
+	
 	// read sensor data and measure update time
 	sensor_update();
 	
@@ -340,24 +392,20 @@ void loop() {
 		I_angle = (float) constrain(analogRead(I_PIN) - 10, 0, 999) / 10;
 		D_angle = (float) constrain(analogRead(D_PIN) - 10, 0, 999) / 100;
 		
-		pid_angle_x_1.set_K_p(P_angle);
-		pid_angle_x_1.set_K_i(I_angle);
-		pid_angle_x_1.set_K_d(D_angle);
-		pid_angle_x_2.set_K_p(P_angle);
-		pid_angle_x_2.set_K_i(I_angle);
-		pid_angle_x_2.set_K_d(D_angle);
+		pid_angle_x.set_K_p(P_angle);
+		pid_angle_x.set_K_i(I_angle);
+		pid_angle_x.set_K_d(D_angle);
 	}
 	
 	// failsafe if angle is too high
-	if (abs(angle_x_KF) > 40) {
+	if (abs(angle_x_KF) > 50) {
 		// turn motors off
 		md.setVelocities(0, 0);
 		
 		// reset PID controller
-		pid_velocity_y_1.reset();
-		pid_velocity_y_2.reset();
-		pid_angle_x_1.reset();
-		pid_angle_x_2.reset();
+		pid_velocity_y.reset();
+		pid_angle_x.reset();
+		pid_deltaVelocity_y.reset();
 		
 		// print display with PID values
 		printDisplay(2, velocity_M1, velocity_M2, angle_x_KF);
@@ -375,32 +423,25 @@ void loop() {
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	// CASCADED PID CONTROL
 	
-	// velocity setpoint
-	static float velocity_y_sp = 0;
-	
 	// angle setpoint
-	static float angle_x_sp_1;
-	static float angle_x_sp_2;
+	static float angle_x_sp;
 	
 	// control variables
-	static float mv_M1;
-	static float mv_M2;
+	static float mv_M;
+	static float mv_deltaM;
 	
 	// calculate angle setpoint
-	angle_x_sp_1 = pid_velocity_y_1.get_mv(velocity_y_sp, (velocity_M1 + velocity_M2)/2, dT);
-	angle_x_sp_2 = pid_velocity_y_2.get_mv(velocity_y_sp, (velocity_M1 + velocity_M2)/2, dT);
+	angle_x_sp = pid_velocity_y.get_mv(velocity_y_sp, (velocity_M1 + velocity_M2)/2, dT);
 	
-	// calculate control variables
-	mv_M1 = pid_angle_x_1.get_mv(angle_x_sp_1, angle_x_KF, dT);
-	mv_M2 = pid_angle_x_2.get_mv(angle_x_sp_2, angle_x_KF, dT);
-	
-	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_sp_1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_M1);
+	// calculate control variable
+	mv_M = pid_angle_x.get_mv(angle_x_sp, angle_x_KF, dT);
+	mv_deltaM = pid_deltaVelocity_y.get_mv(deltaVelocity_y_sp, velocity_M1 - velocity_M2, dT);
 	
 	// CASCADED PID CONTROL
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	
 	// set motor velocities
-	md.setVelocities(round(mv_M1), round(mv_M2));
+	md.setVelocities(round(mv_M - mv_deltaM), round(mv_M + mv_deltaM));
 	
 	// check if motor shield reports error
 	if (md.getFault())
@@ -430,7 +471,7 @@ void loop() {
 	//DEBUG_PRINTLN(angle_x_KF);
 	
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINTLN(cv_M1_pwm);
-	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(mv_M1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(mv_M2);
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(mv_M); DEBUG_PRINT("\t");
 	//DEBUG_PRINT(md.getM1Current()); DEBUG_PRINT("\t"); DEBUG_PRINTLN(md.getM2Current());
 	
 	// Send data to "Processing" for visualization
@@ -439,6 +480,127 @@ void loop() {
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	// SERIAL DEBUG
 	//--------------------------------------------------------------------------------------------------------------------------------------------
+}
+
+// update from BB-1_Remote
+void remote_update(const char order) {
+	// time since last try to reconnect in microseconds
+	static int32_t reconnectTime = 0;
+	// received chars
+	static char receivedChars[maxChars];
+	
+	// check if remote appears to be connected
+	if (remoteConnection) {
+		if (getData(order, receivedChars)) {
+			//Serial.println(receivedChars);
+			velocity_y_sp_update(receivedChars);	
+		}
+	}
+	else {
+		// set velocity setpoints to zero, so BB-1 does not drive away when the remote connection is lost
+		velocity_y_sp = 0;
+		deltaVelocity_y_sp = 0;
+		
+		// try to connect at start or try to reconnect in a time interval specified by REMOTE_TIMEOUT
+		if (first || ((reconnectTime += dt) > REMOTE_TIMEOUT)) {
+			Serial1.print(HELLO_BB1_REMOTE);
+			reconnectTime = 0;
+		}
+		
+		if (Serial1.available() > 0) {
+			if (Serial1.read() == HELLO_BB1) {
+				remoteConnection = true;
+				requestRemoteData = true;
+				reconnectTime = 0;
+			}
+		}
+	}
+}
+
+// get data from BB-1_Remote
+boolean getData(const char order, char *receivedChars) {
+	static boolean recvInProgress = false;
+	static byte ndx = 0;
+	static char rc;
+	
+	// time since last data request in microseconds
+	static int32_t answerTime = 0;
+	
+	if (requestRemoteData) {
+		// request data from BB-1_Remote
+		Serial1.print(order);
+		
+		requestRemoteData = false;
+		answerTime = 0;
+	}
+	else {
+		// check for communication timeout
+		if ((answerTime += dt) < REMOTE_TIMEOUT) {
+			while (Serial1.available()) {
+				answerTime = 0;
+				
+				rc = Serial1.read();
+				
+				if (recvInProgress) {
+					if (rc != '>') {
+						receivedChars[ndx] = rc;
+						ndx++;
+						if (ndx >= maxChars) {
+							ndx = maxChars - 1;
+						}
+					}
+					else {
+						receivedChars[ndx] = '\0';	// terminate the string
+						ndx = 0;
+						recvInProgress = false;
+						requestRemoteData = true;
+						
+						// check if the received data matches the ordered data
+						if (receivedChars[0] == order) {
+							return true;
+						}
+					}
+				}
+				else if (rc == '<') {
+					recvInProgress = true;
+				}
+			}
+		}
+		else {
+			remoteConnection = false;
+			recvInProgress = false;
+			ndx = 0;
+		}
+	}
+	return false;
+}
+
+// update velocity y setpoints
+void velocity_y_sp_update(char *receivedChars) {
+	char *strtokIndx;
+	
+	// joystick data
+	static int8_t x;
+	static int8_t y;
+	
+	// get dataType
+	strtokIndx = strtok(receivedChars,",");
+	// check if the received data type matches the requested data type
+	if (VELOCITY == strtokIndx[0]) {
+		// get x data
+		strtokIndx = strtok(NULL, ",");
+		x = atoi(strtokIndx);
+		// get y data
+		strtokIndx = strtok(NULL, ",");
+		y = atoi(strtokIndx);
+		
+		if (x <= 0) {
+			velocity_y_sp = map(x, -128, 0, -VELOCITY_LIMIT, 0);
+		}
+		else {
+			velocity_y_sp = map(x, 0, 127, 0, VELOCITY_LIMIT);
+		}
+	}
 }
 
 // read sensor data and measure update time
@@ -470,22 +632,22 @@ void sensor_update() {
 		first = false;
 	}
 	/*else if (abs((dt * 100) / mpu_update_time - 100) > 3) {
-		// print error when interrupts happen too early or too late
-		if (((dt * 100) / mpu_update_time - 100) > 3) {
-			DEBUG_PRINTLN("Error: MPU interrupt too late!");
-		}
-		else {
-			DEBUG_PRINTLN("Warning: MPU interrupt too early!");
-		}
-		
-		DEBUG_PRINT("Expected: "); DEBUG_PRINT(mpu_update_time); DEBUG_PRINT(" us"); DEBUG_PRINT("\t"); DEBUG_PRINT("Measured: "); DEBUG_PRINT(dt); DEBUG_PRINTLN(" us");
-			
-		while(1);
-		
-		// reset interrupt status
-		//mpuInterrupt = false;
-		//mpuIntStatus = mpu.getIntStatus();
-		//first = true;
+	// print error when interrupts happen too early or too late
+	if (((dt * 100) / mpu_update_time - 100) > 3) {
+	DEBUG_PRINTLN("Error: MPU interrupt too late!");
+	}
+	else {
+	DEBUG_PRINTLN("Warning: MPU interrupt too early!");
+	}
+	
+	DEBUG_PRINT("Expected: "); DEBUG_PRINT(mpu_update_time); DEBUG_PRINT(" us"); DEBUG_PRINT("\t"); DEBUG_PRINT("Measured: "); DEBUG_PRINT(dt); DEBUG_PRINTLN(" us");
+	
+	while(1);
+	
+	// reset interrupt status
+	//mpuInterrupt = false;
+	//mpuIntStatus = mpu.getIntStatus();
+	//first = true;
 	}*/
 	
 	while (!mpuInterrupt) {
@@ -516,8 +678,8 @@ void sensor_update() {
 
 // calculate velocities
 void calc_velocities(float& velocity_M1, float& velocity_M2) {
-	velocity_M1 = (float)enc_count_M1 / ENCODER_RESOLUTION * WHEEL_DIAMETER * PI / dT;
-	velocity_M2 = (float)enc_count_M2 / ENCODER_RESOLUTION * WHEEL_DIAMETER * PI / dT;
+	velocity_M1 = (float)enc_count_M1 / ENCODER_RESOLUTION * TIRE_DIAMETER * PI / dT;
+	velocity_M2 = (float)enc_count_M2 / ENCODER_RESOLUTION * TIRE_DIAMETER * PI / dT;
 }
 
 // calculate accel x and y angles in degrees
@@ -565,45 +727,48 @@ void printDisplay(int8_t mode, float velocity_M1, float velocity_M2, float angle
 		lcd.clear();
 		switch (mode)
 		{
-			case 1: lcd.setCursor (0, 0);
-					lcd.print("        BB-1        ");
-					lcd.setCursor (0, 1);
-					lcd.print("v:");
-					lcd.setCursor (7, 1);
-					lcd.print(".");
-					lcd.setCursor (12, 1);
-					lcd.print(".");
-					lcd.setCursor (17, 1);
-					lcd.print("m/s");
-					lcd.setCursor (0, 2);
-					lcd.print("a:");
-					lcd.setCursor (7, 2);
-					lcd.print(".");
-					lcd.setCursor (17, 2);
-					lcd.print((char)223);
-					lcd.setCursor (0, 3);
-					lcd.print("dt:");
-					lcd.setCursor (7, 3);
-					lcd.print(".");
-					lcd.setCursor (17, 3);
-					lcd.print("ms");
-					break;
-			case 2:	lcd.setCursor (0, 0);
-					lcd.print("        BB-1        ");
-					lcd.setCursor (0, 1);
-					lcd.print("P:");
-					lcd.setCursor (5, 1);
-					lcd.print(".");
-					lcd.setCursor (0, 2);
-					lcd.print("I:");
-					lcd.setCursor (5, 2);
-					lcd.print(".");
-					lcd.setCursor (0, 3);
-					lcd.print("D:");
-					lcd.setCursor (5, 3);
-					lcd.print(".");
-					break;
-			default: break;
+			case 1:
+			lcd.setCursor (0, 0);
+			lcd.print("        BB-1        ");
+			lcd.setCursor (0, 1);
+			lcd.print("v:");
+			lcd.setCursor (7, 1);
+			lcd.print(".");
+			lcd.setCursor (12, 1);
+			lcd.print(".");
+			lcd.setCursor (17, 1);
+			lcd.print("m/s");
+			lcd.setCursor (0, 2);
+			lcd.print("a:");
+			lcd.setCursor (7, 2);
+			lcd.print(".");
+			lcd.setCursor (17, 2);
+			lcd.print((char)223);
+			lcd.setCursor (0, 3);
+			lcd.print("dt:");
+			lcd.setCursor (7, 3);
+			lcd.print(".");
+			lcd.setCursor (17, 3);
+			lcd.print("ms");
+			break;
+			case 2:
+			lcd.setCursor (0, 0);
+			lcd.print("        BB-1        ");
+			lcd.setCursor (0, 1);
+			lcd.print("P:");
+			lcd.setCursor (5, 1);
+			lcd.print(".");
+			lcd.setCursor (0, 2);
+			lcd.print("I:");
+			lcd.setCursor (5, 2);
+			lcd.print(".");
+			lcd.setCursor (0, 3);
+			lcd.print("D:");
+			lcd.setCursor (5, 3);
+			lcd.print(".");
+			break;
+			default:
+			break;
 		}
 		mode_old = mode;
 		
@@ -618,141 +783,142 @@ void printDisplay(int8_t mode, float velocity_M1, float velocity_M2, float angle
 		LCD_time = 0;
 		switch (mode)
 		{
-			case 1:	
-					lcd.setCursor (5, 1);
-					LCD_temp2 = round(velocity_M1 / 100);
-					LCD_temp1 = abs(LCD_temp2 / 10);
-					LCD_temp2 = abs(LCD_temp2 % 10);
-					if (velocity_M1 >= 0) {
-						lcd.print(" ");
-					}
-					else {
-						lcd.print("-");
-					}
-					lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
-					
-					lcd.setCursor (10, 1);
-					LCD_temp2 = round(velocity_M2 / 100);
-					LCD_temp1 = abs(LCD_temp2 / 10);
-					LCD_temp2 = abs(LCD_temp2 % 10);
-					if (velocity_M2 >= 0) {
-						lcd.print(" ");
-					}
-					else {
-						lcd.print("-");
-					}
-					lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
-				
-					lcd.setCursor (3, 2);
-					LCD_temp2 = round(angle_x_KF * 10);
-					LCD_temp1 = abs(LCD_temp2 / 10);
-					LCD_temp2 = abs(LCD_temp2 % 10);
-					if (LCD_temp1 < 100) {
-						lcd.print(" ");
-						if (LCD_temp1 < 10) {
-							lcd.print(" ");
-						}
-					}	
-					if (angle_x_KF >= 0) {
-						lcd.print(" ");
-					}
-					else {
-						lcd.print("-");
-					}
-					lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
-				
-					lcd.setCursor (5, 3);
-					LCD_temp2 = round((float) dt / 100);
-					LCD_temp1 = abs(LCD_temp2 / 10);
-					LCD_temp2 = abs(LCD_temp2 % 10);
-					if (LCD_temp1 < 10) {
-						lcd.print(" ");
-					}
-					lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
+			case 1:
+			lcd.setCursor (5, 1);
+			LCD_temp2 = round(velocity_M1 / 100);
+			LCD_temp1 = abs(LCD_temp2 / 10);
+			LCD_temp2 = abs(LCD_temp2 % 10);
+			if (velocity_M1 >= 0) {
+				lcd.print(" ");
+			}
+			else {
+				lcd.print("-");
+			}
+			lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
+			
+			lcd.setCursor (10, 1);
+			LCD_temp2 = round(velocity_M2 / 100);
+			LCD_temp1 = abs(LCD_temp2 / 10);
+			LCD_temp2 = abs(LCD_temp2 % 10);
+			if (velocity_M2 >= 0) {
+				lcd.print(" ");
+			}
+			else {
+				lcd.print("-");
+			}
+			lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
+			
+			lcd.setCursor (3, 2);
+			LCD_temp2 = round(angle_x_KF * 10);
+			LCD_temp1 = abs(LCD_temp2 / 10);
+			LCD_temp2 = abs(LCD_temp2 % 10);
+			if (LCD_temp1 < 100) {
+				lcd.print(" ");
+				if (LCD_temp1 < 10) {
+					lcd.print(" ");
+				}
+			}
+			if (angle_x_KF >= 0) {
+				lcd.print(" ");
+			}
+			else {
+				lcd.print("-");
+			}
+			lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
+			
+			lcd.setCursor (5, 3);
+			LCD_temp2 = round((float) dt / 100);
+			LCD_temp1 = abs(LCD_temp2 / 10);
+			LCD_temp2 = abs(LCD_temp2 % 10);
+			if (LCD_temp1 < 10) {
+				lcd.print(" ");
+			}
+			lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
 
-					
-					break;
-					
-					/*	
-					static char line_1[7], line_2[6], line_3[4];
-					static uint16_t pos;
-					
-					LCD_temp2 = round(velocity_M1 / 100);
-					LCD_temp1 = abs(LCD_temp2 / 10);
-					LCD_temp2 = abs(LCD_temp2 % 10);
-					if (velocity_M1 >= 0) {
-						pos = sprintf(line_1, "%c%u%u", ' ', LCD_temp1, LCD_temp2);
-					}
-					else {
-						pos = sprintf(line_1, "%c%u%u", '-', LCD_temp1, LCD_temp2);
-					}
-					
-					LLCD_temp2 = round(velocity_M2 / 100);
-					LCD_temp1 = abs(LCD_temp2 / 10);
-					LCD_temp2 = abs(LCD_temp2 % 10);
-					if (velocity_M2 >= 0) {
-						pos = sprintf(line_1, "%c%u%u", ' ', LCD_temp1, LCD_temp2);
-					}
-					else {
-						pos = sprintf(line_1, "%c%u%u", '-', LCD_temp1, LCD_temp2);
-					}
-					
-					LCD_temp2 = round(angle_x_KF * 10);
-					LCD_temp1 = abs(LCD_temp2 / 10);
-					LCD_temp2 = abs(LCD_temp2 % 10);
-					if (LCD_temp1 < 100) {
-						pos = sprintf(line_2, "%c", ' ');
-						if (LCD_temp1 < 10) {
-							pos = sprintf(line_2 + pos, "%c", ' ');
-						}
-					}
-					if (angle_x_KF >= 0) {
-						sprintf(line_2 + pos, "%c%u%u", ' ', LCD_temp1, LCD_temp2);
-					}
-					else {
-						sprintf(line_2 + pos, "%c%u%u", '-', LCD_temp1, LCD_temp2);
-					}
-					
-					LCD_temp2 = round((float) dt / 100);
-					LCD_temp1 = LCD_temp2 / 10;
-					LCD_temp2 = LCD_temp2 % 10;
-					if (LCD_temp1 < 10) {
-						pos = sprintf(line_3, "%c", ' ');
-					}
-					sprintf(line_3 + pos, "%u%u", LCD_temp1, LCD_temp2);
-					*/
-					
-			case 2:	lcd.setCursor (3, 1);
-					LCD_temp2 = round(P_angle * 10);
-					LCD_temp1 = LCD_temp2 / 10;
-					LCD_temp2 = LCD_temp2 % 10;
-					if (LCD_temp1 < 10) {
-						lcd.print(" ");
-					}
-					lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
-					
-					lcd.setCursor (3, 2);
-					LCD_temp2 = round(I_angle * 10);
-					LCD_temp1 = LCD_temp2 / 10;
-					LCD_temp2 = LCD_temp2 % 10;
-					if (LCD_temp1 < 10) {
-						lcd.print(" ");
-					}
-					lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
-					
-					lcd.setCursor (4, 3);
-					LCD_temp2 = round(D_angle * 100);
-					LCD_temp1 = LCD_temp2 / 100;
-					LCD_temp2 = LCD_temp2 % 100;
-					lcd.print(LCD_temp1); lcd.moveCursorRight();
-					if (LCD_temp2 < 10) {
-						lcd.print("0");
-					}
-					lcd.print(LCD_temp2);
-					
-					break;
-					
-			default: break;
+			break;
+			
+			/*
+			static char line_1[7], line_2[6], line_3[4];
+			static uint16_t pos;
+			
+			LCD_temp2 = round(velocity_M1 / 100);
+			LCD_temp1 = abs(LCD_temp2 / 10);
+			LCD_temp2 = abs(LCD_temp2 % 10);
+			if (velocity_M1 >= 0) {
+			pos = sprintf(line_1, "%c%u%u", ' ', LCD_temp1, LCD_temp2);
+			}
+			else {
+			pos = sprintf(line_1, "%c%u%u", '-', LCD_temp1, LCD_temp2);
+			}
+			
+			LLCD_temp2 = round(velocity_M2 / 100);
+			LCD_temp1 = abs(LCD_temp2 / 10);
+			LCD_temp2 = abs(LCD_temp2 % 10);
+			if (velocity_M2 >= 0) {
+			pos = sprintf(line_1, "%c%u%u", ' ', LCD_temp1, LCD_temp2);
+			}
+			else {
+			pos = sprintf(line_1, "%c%u%u", '-', LCD_temp1, LCD_temp2);
+			}
+			
+			LCD_temp2 = round(angle_x_KF * 10);
+			LCD_temp1 = abs(LCD_temp2 / 10);
+			LCD_temp2 = abs(LCD_temp2 % 10);
+			if (LCD_temp1 < 100) {
+			pos = sprintf(line_2, "%c", ' ');
+			if (LCD_temp1 < 10) {
+			pos = sprintf(line_2 + pos, "%c", ' ');
+			}
+			}
+			if (angle_x_KF >= 0) {
+			sprintf(line_2 + pos, "%c%u%u", ' ', LCD_temp1, LCD_temp2);
+			}
+			else {
+			sprintf(line_2 + pos, "%c%u%u", '-', LCD_temp1, LCD_temp2);
+			}
+			
+			LCD_temp2 = round((float) dt / 100);
+			LCD_temp1 = LCD_temp2 / 10;
+			LCD_temp2 = LCD_temp2 % 10;
+			if (LCD_temp1 < 10) {
+			pos = sprintf(line_3, "%c", ' ');
+			}
+			sprintf(line_3 + pos, "%u%u", LCD_temp1, LCD_temp2);
+			*/
+			
+			case 2:
+			lcd.setCursor (3, 1);
+			LCD_temp2 = round(P_angle * 10);
+			LCD_temp1 = LCD_temp2 / 10;
+			LCD_temp2 = LCD_temp2 % 10;
+			if (LCD_temp1 < 10) {
+				lcd.print(" ");
+			}
+			lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
+			
+			lcd.setCursor (3, 2);
+			LCD_temp2 = round(I_angle * 10);
+			LCD_temp1 = LCD_temp2 / 10;
+			LCD_temp2 = LCD_temp2 % 10;
+			if (LCD_temp1 < 10) {
+				lcd.print(" ");
+			}
+			lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
+			
+			lcd.setCursor (4, 3);
+			LCD_temp2 = round(D_angle * 100);
+			LCD_temp1 = LCD_temp2 / 100;
+			LCD_temp2 = LCD_temp2 % 100;
+			lcd.print(LCD_temp1); lcd.moveCursorRight();
+			if (LCD_temp2 < 10) {
+				lcd.print("0");
+			}
+			lcd.print(LCD_temp2);
+			
+			break;
+			
+			default:
+			break;
 		}
 	}
 	else {
