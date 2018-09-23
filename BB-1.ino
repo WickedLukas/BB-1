@@ -94,16 +94,26 @@ const int16_t ENCODER_RESOLUTION = 960;
 const int16_t TIRE_DIAMETER = 120;
 
 // wheelbase in mm
-const int16_t WHEELBASE = 235;
+//const int16_t WHEELBASE = 235;
 
-// maximum velocity
+// maximum angle of BB-1 (failsafe)
+const float ANGLE_MAX = 55;
+
+// maximum allowed angle for BB-1
+const float ANGLE_LIMIT = 50;
+
+// maximum velocity of BB-1
 const float VELOCITY_MAX = PI * MOTOR_RPM * TIRE_DIAMETER / 60;
 
-// velocity limit
+// maximum allowed velocity for BB-1
 const float VELOCITY_LIMIT = 0.2 * VELOCITY_MAX;
 
-// velocities setpoints received from BB-1_Remote
+// maximum allowed delta velocity for BB-1
+const float DELTA_VELOCITY_LIMIT = VELOCITY_LIMIT;
+
+// velocity setpoint according to BB-1_Remote data (determines the speed at which BB-1 is moving forward)
 float velocity_y_sp = 0;
+// delta velocity setpoint according to BB-1_Remote data (determines the speed at which BB-1 is turning)
 float deltaVelocity_y_sp = 0;
 
 // MPU raw measurements
@@ -119,12 +129,11 @@ int8_t enc_count_M1, enc_count_M2;
 
 // Kalman filter class
 KalmanFilter kalmanFilter_x(1, 0.1, 0.05, 0.1, 0.001, 0);	// previous parameters: (1, 0.01, 0.03, 0.1, 0.001, 0), qp_rate to r_gyro ratio is important
-// KalmanFilter kalmanFilter_y(1, 0.1, 0.05, 0.1, 0.001, 0);	// previous parameters: (1, 0.01, 0.03, 0.1, 0.001, 0), qp_rate to r_gyro ratio is important
 
 // turn on PID tuning with potentiometers
 static boolean tunePID = true;
 
-// PID values for angle controller
+// PID values for angle controller (will currently be overwritten by potentiometer measurement)
 float P_angle = 8;
 float I_angle = 0;
 float D_angle = 0;
@@ -135,14 +144,14 @@ float I_velovcity = 0.004;
 float D_velovcity = 0;
 
 // PID values for delta velocity controller
-float P_deltaVelovcity = 0;
+float P_deltaVelovcity = 0.02;
 float I_deltaVelovcity = 0;
 float D_deltaVelovcity = 0;
 
 // PID controller classes for angle (mpu) and velocity (encoder)
 PID_controller pid_angle_x(P_angle, I_angle, D_angle, 0, 15, 255);
-PID_controller pid_velocity_y(P_velovcity, I_velovcity, D_velovcity, 0, 0, 50);
-PID_controller pid_deltaVelocity_y(P_deltaVelovcity, I_deltaVelovcity, D_deltaVelovcity, 0, 0, 0.5);
+PID_controller pid_velocity_y(P_velovcity, I_velovcity, D_velovcity, 0, 0, ANGLE_LIMIT);
+PID_controller pid_deltaVelocity_y(P_deltaVelovcity, I_deltaVelovcity, D_deltaVelovcity, 0, 15, 255);
 
 // motor controller class
 DualMC33926MotorShield md(11, 9, A0, 8, 10, A1, 4, 12);	// remap M1DIR from pin 7 to pin 11
@@ -212,7 +221,7 @@ void dataReady() {
 // Debug output is now working even on ATMega328P MCUs (e.g. Arduino Uno)
 // after moving string constants to flash memory storage using the F()
 // compiler macro (Arduino IDE 1.0+ required).
-//#define DEBUG
+#define DEBUG
 
 #ifdef DEBUG
 #define DEBUG_PRINT(x) Serial.print(x)
@@ -298,13 +307,13 @@ void setup() {
 	DEBUG_PRINTLN(F("Calibration completed.\n"));
 	#else
 	// use offsets from previous calibration
-	mpu.setXAccelOffset(-506);
-	mpu.setYAccelOffset(2524);
-	mpu.setZAccelOffset(1047);
+	mpu.setXAccelOffset(-438);
+	mpu.setYAccelOffset(2558);
+	mpu.setZAccelOffset(1226);
 
-	mpu.setXGyroOffset(-10);
-	mpu.setYGyroOffset(34);
-	mpu.setZGyroOffset(52);
+	mpu.setXGyroOffset(29);
+	mpu.setYGyroOffset(25);
+	mpu.setZGyroOffset(25);
 	#endif
 }
 
@@ -368,7 +377,6 @@ void loop() {
 
 	// calculate Kalman filtered x and y angles
 	angle_x_KF = kalmanFilter_x.get_angle(dT, rate_x_gyro, angle_x_accel);
-	// angle_y_KF = kalmanFilter_y.get_angle(dT, rate_y_gyro, angle_y_accel);
 	
 	// KALMAN FILTER
 	//--------------------------------------------------------------------------------------------------------------------------------------------
@@ -398,7 +406,7 @@ void loop() {
 	}
 	
 	// failsafe if angle is too high
-	if (abs(angle_x_KF) > 50) {
+	if (abs(angle_x_KF) > ANGLE_MAX) {
 		// turn motors off
 		md.setVelocities(0, 0);
 		
@@ -435,7 +443,7 @@ void loop() {
 	
 	// calculate control variable
 	mv_M = pid_angle_x.get_mv(angle_x_sp, angle_x_KF, dT);
-	mv_deltaM = pid_deltaVelocity_y.get_mv(deltaVelocity_y_sp, velocity_M1 - velocity_M2, dT);
+	mv_deltaM = pid_deltaVelocity_y.get_mv(deltaVelocity_y_sp, (velocity_M1 - velocity_M2)/2, dT);
 	
 	// CASCADED PID CONTROL
 	//--------------------------------------------------------------------------------------------------------------------------------------------
@@ -454,7 +462,7 @@ void loop() {
 	// SERIAL DEBUG
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	
-	//DEBUG_PRINT(ax); DEBUG_PRINT("\t"); DEBUG_PRINT(ax); DEBUG_PRINT("\t"); DEBUG_PRINTLN(az);
+	//DEBUG_PRINT(ax); DEBUG_PRINT("\t"); DEBUG_PRINT(ay); DEBUG_PRINT("\t"); DEBUG_PRINTLN(az);
 	//DEBUG_PRINT(gx); DEBUG_PRINT("\t"); DEBUG_PRINT(gy); DEBUG_PRINT("\t"); DEBUG_PRINTLN(gz);
 	
 	//DEBUG_PRINT(enc_count_M1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(enc_count_M2);
@@ -468,7 +476,7 @@ void loop() {
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(velocity_M1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_M2);
 	
 	//DEBUG_PRINT(dt); DEBUG_PRINT("\t"); DEBUG_PRINTLN(mpu_update_time);
-	//DEBUG_PRINTLN(angle_x_KF);
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_accel); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_gyro);
 	
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINTLN(cv_M1_pwm);
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(mv_M); DEBUG_PRINT("\t");
@@ -492,7 +500,6 @@ void remote_update(const char order) {
 	// check if remote appears to be connected
 	if (remoteConnection) {
 		if (getData(order, receivedChars)) {
-			//Serial.println(receivedChars);
 			velocity_y_sp_update(receivedChars);	
 		}
 	}
@@ -594,11 +601,20 @@ void velocity_y_sp_update(char *receivedChars) {
 		strtokIndx = strtok(NULL, ",");
 		y = atoi(strtokIndx);
 		
+		// update velocity y setpoint
 		if (x <= 0) {
 			velocity_y_sp = map(x, -128, 0, -VELOCITY_LIMIT, 0);
 		}
 		else {
 			velocity_y_sp = map(x, 0, 127, 0, VELOCITY_LIMIT);
+		}
+		
+		// update delta velocity y setpoint
+		if (y <= 0) {
+			deltaVelocity_y_sp = map(y, -128, 0, DELTA_VELOCITY_LIMIT, 0);
+		}
+		else {
+			deltaVelocity_y_sp = map(y, 0, 127, 0, -DELTA_VELOCITY_LIMIT);
 		}
 	}
 }
