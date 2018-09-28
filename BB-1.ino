@@ -59,7 +59,7 @@ const float RAD2DEG = 4068 / 71;
 const float G = 9.81;
 
 // configuration for digital low pass filter
-const char DLPFMode = MPU6050_DLPF_BW_98;
+const char DLPFMode = MPU6050_DLPF_BW_188;
 
 // sample rate = gyroscope output rate / (1 + SampleRateDivider)
 // gyroscope output rate is 8kHz for DLPFMode MPU6050_DLPF_BW_256 else 1 kHz
@@ -127,14 +127,15 @@ int16_t gx0, gy0, gz0;
 // encoder raw measurements
 int8_t enc_count_M1, enc_count_M2;
 
-// Kalman filter class
-KalmanFilter kalmanFilter_x(1, 0.1, 0.05, 0.1, 0.001, 0);	// previous parameters: (1, 0.01, 0.03, 0.1, 0.001, 0), qp_rate to r_gyro ratio is important
+// Kalman filter class 
+// parameters: qp_angle, qp_rate, qp_rateBias, r_acc, r_gyro, angle
+KalmanFilter kalmanFilter_x(0.2, 0.01, 0.001, 0.03, 0.001, 0);	// previous parameters: (0.1, 0.01, 0.001, 0.5, 0.0001, 0), qp_rate to r_gyro ratio is important
 
 // turn on PID tuning with potentiometers
 static boolean tunePID = true;
 
 // PID values for angle controller (will currently be overwritten by potentiometer measurement)
-float P_angle = 8;
+float P_angle = 5;
 float I_angle = 0;
 float D_angle = 0;
 
@@ -151,7 +152,7 @@ float D_deltaVelovcity = 0;
 // PID controller classes for angle (mpu) and velocity (encoder)
 PID_controller pid_angle_x(P_angle, I_angle, D_angle, 0, 15, 255);
 PID_controller pid_velocity_y(P_velovcity, I_velovcity, D_velovcity, 0, 0, ANGLE_LIMIT);
-PID_controller pid_deltaVelocity_y(P_deltaVelovcity, I_deltaVelovcity, D_deltaVelovcity, 0, 15, 255);
+PID_controller pid_deltaVelocity_y(P_deltaVelovcity, I_deltaVelovcity, D_deltaVelovcity, 0, 0, 255);
 
 // motor controller class
 DualMC33926MotorShield md(11, 9, A0, 8, 10, A1, 4, 12);	// remap M1DIR from pin 7 to pin 11
@@ -449,7 +450,8 @@ void loop() {
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	
 	// set motor velocities
-	md.setVelocities(round(mv_M - mv_deltaM), round(mv_M + mv_deltaM));
+	//md.setVelocities(round(mv_M - mv_deltaM), round(mv_M + mv_deltaM));
+	md.setVelocities(round(0), round(0));
 	
 	// check if motor shield reports error
 	if (md.getFault())
@@ -476,8 +478,8 @@ void loop() {
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(velocity_M1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_M2);
 	
 	//DEBUG_PRINT(dt); DEBUG_PRINT("\t"); DEBUG_PRINTLN(mpu_update_time);
-	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_accel); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_gyro);
-	
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_CF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_gyro); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_accel);
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINTLN(kalmanFilter_x.get_rateBias());
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINTLN(cv_M1_pwm);
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(mv_M); DEBUG_PRINT("\t");
 	//DEBUG_PRINT(md.getM1Current()); DEBUG_PRINT("\t"); DEBUG_PRINTLN(md.getM2Current());

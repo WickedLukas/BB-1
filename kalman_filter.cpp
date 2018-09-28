@@ -35,7 +35,7 @@ KalmanFilter::KalmanFilter(float qp_angle_new, float qp_rate_new, float qp_rateB
 
 // updates the model error covariance matrix with the current dT
 void KalmanFilter::calc_Q(float dT) {
-	q_angle		= qp_angle * dT * dT;
+	q_angle		= qp_angle * 0.5 * dT * dT;
 	q_rate		= qp_rate * dT;
 	q_rateBias	= qp_rateBias * dT;
 }
@@ -91,15 +91,18 @@ float KalmanFilter::get_angle(float dT, float rate_new, float angle_new) {
 	// predict state
 	// x(k+1) = Phi * x(k)
 	angle += dT * (rate_new - rateBias);
+	rate -= rateBias;
 
 	// predict state error
 	// P(k+1) = Phi * P(k) * Phi' + Q
-	p1 += dT * (p4 - p7 + p2 - p3) + dT * dT * (p5 - p8 - p6 + p9) + q_angle;
-	p2 += dT * (p5 - p8);
+	p1 += dT * (p2 - p3 + p4 - p7) + dT * dT * (p5 - p6 - p8 + p9) + q_angle;
+	p2 += -p3 + dT * (p5 - p6 - p8 + p9);
 	p3 += dT * (p6 - p9);
-	p4 += dT * (p5 - p6);
-	p5 += q_rate;
+	p4 += -p7 + dT * (p5 - p6 - p8 + p9);
+	p5 += -p6 - p8 + p9 + q_rate;
+	p6 -= p9;
 	p7 += dT * (p8 - p9);
+	p8 -= p9;
 	p9 += q_rateBias;
 
 	return angle_filtered;

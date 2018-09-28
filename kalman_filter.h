@@ -36,8 +36,8 @@ class KalmanFilter {
 
 	// transition matrix
 	//		|1	dT	-dT	|
-	// Phi =|0	1	0	|
-	//		|0	0	1	|
+	// Phi =|0	1	-1	|
+	//		|0	0	 1	|
 
 	// measurement matrix
 	//		|1	0	0|
