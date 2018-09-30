@@ -80,7 +80,7 @@ float PID_controller::get_mv(float sp, float pv, float dT) {
 		
 		prop_sum = proportional + proportional_old;
 		
-		integral += dT_pid * prop_sum / 2;
+		integral += dT_pid * prop_sum * 0.5;
 		
 		// wind-up compensation
 		if (((mv >= max_mv) && (prop_sum > 0)) || ((mv <= -max_mv) && (prop_sum < 0)))

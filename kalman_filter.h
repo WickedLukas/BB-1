@@ -60,7 +60,7 @@ class KalmanFilter {
 	private:
 
 	// calculates the model error covariance with the current dT
-	void calc_Q(float dT);
+	void calc_Q(float dT, float dT2);
 	
 	public:
 	

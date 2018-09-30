@@ -14,7 +14,8 @@
 #include "DualMC33926MotorShield.h"
 #include "LiquidCrystal_I2C.h"
 
-//#include "complementary_filter.h"
+#include "ema_filter.h"
+#include "complementary_filter.h"
 #include "kalman_filter.h"
 #include "PID_controller.h"
 
@@ -39,6 +40,7 @@ LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
 // address of the Arduino slave reading encoder values
 #define SLAVE_ADDRESS 0x08
 
+// flag for initialization, necessary to calculate derivative values
 boolean first = true;
 
 // remote connection status
@@ -53,13 +55,17 @@ const int32_t REMOTE_TIMEOUT = 100000;
 // maximum number of chars sent in one serial message
 const byte maxChars = 32;
 
+// factor for converting a radian number to an equivalent number in degrees
 const float RAD2DEG = 4068 / 71;
 
 // acceleration of gravity
-const float G = 9.81;
+const float G = 9811;
 
 // configuration for digital low pass filter
-const char DLPFMode = MPU6050_DLPF_BW_188;
+const char DLPFMode = MPU6050_DLPF_BW_42;
+
+// configuration for an exponential moving average filter used to filter the robot acceleration, calculated from the wheel encoder values
+const float EMA_ALPHA_ACCELERATION = 0.2;
 
 // sample rate = gyroscope output rate / (1 + SampleRateDivider)
 // gyroscope output rate is 8kHz for DLPFMode MPU6050_DLPF_BW_256 else 1 kHz
@@ -97,10 +103,10 @@ const int16_t TIRE_DIAMETER = 120;
 //const int16_t WHEELBASE = 235;
 
 // maximum angle of BB-1 (failsafe)
-const float ANGLE_MAX = 55;
+const float ANGLE_MAX = 50;
 
 // maximum allowed angle for BB-1
-const float ANGLE_LIMIT = 50;
+const float ANGLE_LIMIT = 45;
 
 // maximum velocity of BB-1
 const float VELOCITY_MAX = PI * MOTOR_RPM * TIRE_DIAMETER / 60;
@@ -112,9 +118,9 @@ const float VELOCITY_LIMIT = 0.2 * VELOCITY_MAX;
 const float DELTA_VELOCITY_LIMIT = VELOCITY_LIMIT;
 
 // velocity setpoint according to BB-1_Remote data (determines the speed at which BB-1 is moving forward)
-float velocity_y_sp = 0;
+float velocity_sp = 0;
 // delta velocity setpoint according to BB-1_Remote data (determines the speed at which BB-1 is turning)
-float deltaVelocity_y_sp = 0;
+float deltaVelocity_sp = 0;
 
 // MPU raw measurements
 int16_t ax, ay, az;
@@ -129,23 +135,23 @@ int8_t enc_count_M1, enc_count_M2;
 
 // Kalman filter class 
 // parameters: qp_angle, qp_rate, qp_rateBias, r_acc, r_gyro, angle
-KalmanFilter kalmanFilter_x(0.2, 0.01, 0.001, 0.03, 0.001, 0);	// previous parameters: (0.1, 0.01, 0.001, 0.5, 0.0001, 0), qp_rate to r_gyro ratio is important
+KalmanFilter kalmanFilter_x(0.2, 0.01, 0.001, 0.03, 0.001, 0);	// previous parameters: (0.2, 0.01, 0.001, 0.03, 0.001, 0) ;previous parameters (old Kalman): (0.1, 0.01, 0.001, 0.5, 0.0001, 0), qp_rate to r_gyro ratio is important
 
 // turn on PID tuning with potentiometers
 static boolean tunePID = true;
 
 // PID values for angle controller (will currently be overwritten by potentiometer measurement)
-float P_angle = 5;
+float P_angle = 6;
 float I_angle = 0;
 float D_angle = 0;
 
 // PID values for velocity controller
-float P_velovcity = 0.015;
-float I_velovcity = 0.004;
+float P_velovcity = 0;
+float I_velovcity = 0;
 float D_velovcity = 0;
 
 // PID values for delta velocity controller
-float P_deltaVelovcity = 0.02;
+float P_deltaVelovcity = 0;
 float I_deltaVelovcity = 0;
 float D_deltaVelovcity = 0;
 
@@ -184,20 +190,23 @@ void remote_update(const char order);
 // get data from BB-1_Remote
 boolean getData(const char order, char *receivedChars);
 
-// update velocity y setpoints
-void velocity_y_sp_update(char *receivedChars);
+// update velocity setpoints
+void velocity_sp_update(char *receivedChars);
 
 // read sensor data and measure update time
 void sensor_update();
 
 // calculate velocities
-void calc_velocities();
+void calc_velocities(float& velocity_M1, float& velocity_M2, float& velocity);
 
 // calculate accel x and y angles in degrees
 void calc_accelAngles(float& angle_x_accel, float& angle_y_accel);
 
 // calculate gyro x, y and z angles in degrees (not necessary for filters)
 void calc_gyroAngles(float& angle_x_gyro, float& angle_y_gyro, float& angle_z_gyro);
+
+// caclulate accel x angle of BB1 in degrees, which, compared to accel x angle, is corrected by the error caused by robot acceleration
+void calc_accelAngleX_real(float angle_x_accel, float velocity, float& angle_x_accel_real);
 
 // print display
 void printDisplay(int8_t mode, float velocity_M1, float velocity_M2, float angle_x_KF);
@@ -234,11 +243,6 @@ void dataReady() {
 
 
 void setup() {
-	// calibration parameter
-	const int16_t NUM = 100;
-	const int16_t ACCURACY_ACCEL = 9;
-	const int16_t ACCURACY_GYRO = 4;
-
 	// configure Arduino interrupt pin for MPU
 	pinMode(MPU_INTERRUPT_PIN, INPUT);
 	digitalWrite(MPU_INTERRUPT_PIN, HIGH);
@@ -270,7 +274,7 @@ void setup() {
 	// initialize I2C devices
 	DEBUG_PRINTLN(F("\nInitializing I2C devices..."));
 	
-	// initialize LCD (seems to negatively affect interrupts)
+	// initialize LCD (initializing the LCD seems to negatively affect interrupts and even more does actual printing)
 	lcd.begin(20, 4);
 	
 	// initialize MPU
@@ -302,34 +306,39 @@ void setup() {
 	}
 	
 	#ifdef PERFORM_MPU_CALIBRATION
+	// calibration parameter
+	const int16_t NUM = 100;
+	const int16_t ACCURACY_ACCEL = 9;
+	const int16_t ACCURACY_GYRO = 4;
+	
 	// calibrate MPU
 	DEBUG_PRINTLN(F("\nCalibrating ..."));
 	calibMotion6(NUM, ACCURACY_ACCEL, ACCURACY_GYRO);
 	DEBUG_PRINTLN(F("Calibration completed.\n"));
 	#else
 	// use offsets from previous calibration
-	mpu.setXAccelOffset(-438);
-	mpu.setYAccelOffset(2558);
-	mpu.setZAccelOffset(1226);
+	mpu.setXAccelOffset(-459);
+	mpu.setYAccelOffset(2591);
+	mpu.setZAccelOffset(1216);
 
 	mpu.setXGyroOffset(29);
-	mpu.setYGyroOffset(25);
-	mpu.setZGyroOffset(25);
+	mpu.setYGyroOffset(28);
+	mpu.setZGyroOffset(28);
 	#endif
 }
 
 
 void loop() {
-	// update from BB-1_Remote
+	// receive update from BB-1_Remote
 	remote_update(VELOCITY);
 	
 	// read sensor data and measure update time
 	sensor_update();
 	
 	// velocities
-	static float velocity_M1, velocity_M2;
+	static float velocity_M1, velocity_M2, velocity;
 	// calculate velocities
-	calc_velocities(velocity_M1, velocity_M2);
+	calc_velocities(velocity_M1, velocity_M2, velocity);
 
 	// accel angles
 	static float angle_x_accel, angle_y_accel;
@@ -337,13 +346,18 @@ void loop() {
 	calc_accelAngles(angle_x_accel, angle_y_accel);
 	
 	// gyro angles
-	//static float angle_x_gyro = 0, angle_y_gyro = 0, angle_z_gyro = 90;
+	static float angle_x_gyro = 0, angle_y_gyro = 0, angle_z_gyro = 90;
 	// calculate gyro x, y and z angles in degrees (not necessary for filters)
-	//calc_gyroAngles(angle_x_gyro, angle_y_gyro, angle_z_gyro);
+	calc_gyroAngles(angle_x_gyro, angle_y_gyro, angle_z_gyro);
+	
+	// accel angle x of BB1
+	static float angle_x_accel_real;
+	// caclulate accel x angle of BB1 in degrees, which, compared to accel x angle, is corrected by the error caused by robot acceleration
+	calc_accelAngleX_real(angle_x_accel, velocity, angle_x_accel_real);
 	
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	// COMPLEMENTARY FILTER
-	/*
+
 	// complementary filter time constant
 	static const float C_FILTER_T = 0.3;
 	
@@ -354,12 +368,12 @@ void loop() {
 	static float angle_x_CF = 0, angle_y_CF = 0;
 	
 	// delta gyro angles
-	delta_angle_x_gyro = dT * (gx0 + gx) / 2 / GYRO_SENS;
-	delta_angle_y_gyro = dT * (gy0 + gy) / 2 / GYRO_SENS;
+	delta_angle_x_gyro = dT * (gx0 + gx) / (2 * GYRO_SENS);
+	//delta_angle_y_gyro = dT * (gy0 + gy) / (2 * GYRO_SENS);
 	
 	// calculate complementary filtered x and y angles
 	complementaryFilter(angle_x_CF, angle_y_CF, dT, delta_angle_x_gyro, delta_angle_y_gyro, angle_x_accel, angle_y_accel, C_FILTER_T);
-	*/
+
 	// COMPLEMENTARY FILTER
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -367,17 +381,19 @@ void loop() {
 	// KALMAN FILTER
 	
 	// gyro rates
-	static float rate_x_gyro; static float rate_y_gyro; static float rate_z_gyro;
-	
+	static float rate_x_gyro;
 	rate_x_gyro = gx / GYRO_SENS;
-	// rate_y_gyro = gy / GYRO_SENS;
-	// rate_z_gyro = gz / GYRO_SENS;
+	/*
+	static float rate_y_gyro, rate_z_gyro;
+	rate_y_gyro = gy / GYRO_SENS;
+	rate_z_gyro = gz / GYRO_SENS;
+	*/
 	
 	// Kalman filtered angles
-	static float angle_x_KF, angle_y_KF;
+	static float angle_x_KF;
 
 	// calculate Kalman filtered x and y angles
-	angle_x_KF = kalmanFilter_x.get_angle(dT, rate_x_gyro, angle_x_accel);
+	angle_x_KF = kalmanFilter_x.get_angle(dT, rate_x_gyro, angle_x_accel_real);
 	
 	// KALMAN FILTER
 	//--------------------------------------------------------------------------------------------------------------------------------------------
@@ -397,9 +413,9 @@ void loop() {
 	// NAVIGATION
 	
 	if (tunePID) {
-		P_angle = (float) constrain(analogRead(P_PIN) - 10, 0, 999) / 10;
-		I_angle = (float) constrain(analogRead(I_PIN) - 10, 0, 999) / 10;
-		D_angle = (float) constrain(analogRead(D_PIN) - 10, 0, 999) / 100;
+		P_angle = (float) constrain(analogRead(P_PIN) - 10, 0, 999) * 0.1;
+		I_angle = (float) constrain(analogRead(I_PIN) - 10, 0, 999) * 0.1;
+		D_angle = (float) constrain(analogRead(D_PIN) - 10, 0, 999) * 0.01;
 		
 		pid_angle_x.set_K_p(P_angle);
 		pid_angle_x.set_K_i(I_angle);
@@ -423,7 +439,7 @@ void loop() {
 	}
 	else {
 		// print display with sensor values
-		printDisplay(1, velocity_M1, velocity_M2, angle_x_KF);
+		//printDisplay(1, velocity_M1, velocity_M2, angle_x_KF);
 	}
 	
 	// NAVIGATION
@@ -440,18 +456,18 @@ void loop() {
 	static float mv_deltaM;
 	
 	// calculate angle setpoint
-	angle_x_sp = pid_velocity_y.get_mv(velocity_y_sp, (velocity_M1 + velocity_M2)/2, dT);
+	angle_x_sp = pid_velocity_y.get_mv(velocity_sp, velocity, dT);
 	
 	// calculate control variable
 	mv_M = pid_angle_x.get_mv(angle_x_sp, angle_x_KF, dT);
-	mv_deltaM = pid_deltaVelocity_y.get_mv(deltaVelocity_y_sp, (velocity_M1 - velocity_M2)/2, dT);
+	mv_deltaM = pid_deltaVelocity_y.get_mv(deltaVelocity_sp, (velocity_M1 - velocity_M2) * 0.5, dT);
 	
 	// CASCADED PID CONTROL
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	
 	// set motor velocities
-	//md.setVelocities(round(mv_M - mv_deltaM), round(mv_M + mv_deltaM));
-	md.setVelocities(round(0), round(0));
+	md.setVelocities(round(mv_M - mv_deltaM), round(mv_M + mv_deltaM));
+	//md.setVelocities(round(0), round(0));
 	
 	// check if motor shield reports error
 	if (md.getFault())
@@ -471,10 +487,14 @@ void loop() {
 	
 	//DEBUG_PRINTLN(dt);
 	
+	DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_accel_real); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_gyro);
+	//DEBUG_PRINT(angle_x_accel); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_accel_real); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_gyro);
+ 
 	//DEBUG_PRINTLN(line_1);
 	//DEBUG_PRINTLN(line_2);
 	//DEBUG_PRINTLN(line_3);
-	
+
+	//DEBUG_PRINTLN(angle_x_KF);
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(velocity_M1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_M2);
 	
 	//DEBUG_PRINT(dt); DEBUG_PRINT("\t"); DEBUG_PRINTLN(mpu_update_time);
@@ -502,13 +522,13 @@ void remote_update(const char order) {
 	// check if remote appears to be connected
 	if (remoteConnection) {
 		if (getData(order, receivedChars)) {
-			velocity_y_sp_update(receivedChars);	
+			velocity_sp_update(receivedChars);	
 		}
 	}
 	else {
 		// set velocity setpoints to zero, so BB-1 does not drive away when the remote connection is lost
-		velocity_y_sp = 0;
-		deltaVelocity_y_sp = 0;
+		velocity_sp = 0;
+		deltaVelocity_sp = 0;
 		
 		// try to connect at start or try to reconnect in a time interval specified by REMOTE_TIMEOUT
 		if (first || ((reconnectTime += dt) > REMOTE_TIMEOUT)) {
@@ -585,7 +605,7 @@ boolean getData(const char order, char *receivedChars) {
 }
 
 // update velocity y setpoints
-void velocity_y_sp_update(char *receivedChars) {
+void velocity_sp_update(char *receivedChars) {
 	char *strtokIndx;
 	
 	// joystick data
@@ -605,18 +625,18 @@ void velocity_y_sp_update(char *receivedChars) {
 		
 		// update velocity y setpoint
 		if (x <= 0) {
-			velocity_y_sp = map(x, -128, 0, -VELOCITY_LIMIT, 0);
+			velocity_sp = map(x, -128, 0, -VELOCITY_LIMIT, 0);
 		}
 		else {
-			velocity_y_sp = map(x, 0, 127, 0, VELOCITY_LIMIT);
+			velocity_sp = map(x, 0, 127, 0, VELOCITY_LIMIT);
 		}
 		
 		// update delta velocity y setpoint
 		if (y <= 0) {
-			deltaVelocity_y_sp = map(y, -128, 0, DELTA_VELOCITY_LIMIT, 0);
+			deltaVelocity_sp = map(y, -128, 0, DELTA_VELOCITY_LIMIT, 0);
 		}
 		else {
-			deltaVelocity_y_sp = map(y, 0, 127, 0, -DELTA_VELOCITY_LIMIT);
+			deltaVelocity_sp = map(y, 0, 127, 0, -DELTA_VELOCITY_LIMIT);
 		}
 	}
 }
@@ -687,52 +707,75 @@ void sensor_update() {
 	enc_count_M1 = Wire.read();
 	enc_count_M2 = Wire.read();
 
-	dt = (t - t0);	// in us
-	dT = float(dt) / 1000000;	// in s
+	dt = (t - t0);				// in us
+	dT = float(dt) * 0.000001;	// in s
 	
 	// update last MPU update time measurement
 	t0 = t;
 }
 
 // calculate velocities
-void calc_velocities(float& velocity_M1, float& velocity_M2) {
-	velocity_M1 = (float)enc_count_M1 / ENCODER_RESOLUTION * TIRE_DIAMETER * PI / dT;
-	velocity_M2 = (float)enc_count_M2 / ENCODER_RESOLUTION * TIRE_DIAMETER * PI / dT;
+void calc_velocities(float& velocity_M1, float& velocity_M2, float& velocity) {
+	static const float TEMP = (float) TIRE_DIAMETER * PI;
+	static float temp;
+	
+	temp = TEMP / (dT * ENCODER_RESOLUTION);
+	
+	velocity_M1 = enc_count_M1 * temp;
+	velocity_M2 = enc_count_M2 * temp;
+	
+	velocity = (velocity_M1 + velocity_M2) * 0.5;
 }
 
 // calculate accel x and y angles in degrees
 void calc_accelAngles(float& angle_x_accel, float& angle_y_accel) {
 	// calculate accel x and y angles
 	angle_x_accel = atan2(ay, az) * RAD2DEG;
-	angle_y_accel = atan2(-ax, sqrt(pow(ay,2) + pow(az,2))) * RAD2DEG;
+	//angle_y_accel = atan2(-ax, sqrt(pow(ay,2) + pow(az,2))) * RAD2DEG;
 }
 
 // calculate gyro x, y and z angles in degrees (not necessary for filters)
 void calc_gyroAngles(float& angle_x_gyro, float& angle_y_gyro, float& angle_z_gyro) {
 	// calculated gyro angles (LSB / 2000000) - initialized with starting angle
 	static int64_t angle_x_gyro_scaled = angle_x_gyro * 2000000 * GYRO_SENS;
-	static int64_t angle_y_gyro_scaled = angle_y_gyro * 2000000 * GYRO_SENS;
-	static int64_t angle_z_gyro_scaled = angle_z_gyro * 2000000 * GYRO_SENS;
+	//static int64_t angle_y_gyro_scaled = angle_y_gyro * 2000000 * GYRO_SENS;
+	//static int64_t angle_z_gyro_scaled = angle_z_gyro * 2000000 * GYRO_SENS;
 	
 	// calculate gyro angles (LSB / 2000000)
 	angle_x_gyro_scaled += dt * (gx0 + gx);
-	angle_y_gyro_scaled += dt * (gy0 + gy);
-	angle_z_gyro_scaled += dt * (gz0 + gz);
+	//angle_y_gyro_scaled += dt * (gy0 + gy);
+	//angle_z_gyro_scaled += dt * (gz0 + gz);
 
 	// make sure gyro angles do not grow endlessly
 	const static int64_t TEMP = (360 * 2000000 * GYRO_SENS);
 	angle_x_gyro_scaled = angle_x_gyro_scaled % TEMP;
-	angle_y_gyro_scaled = angle_y_gyro_scaled % TEMP;
-	angle_z_gyro_scaled = angle_z_gyro_scaled % TEMP;
+	//angle_y_gyro_scaled = angle_y_gyro_scaled % TEMP;
+	//angle_z_gyro_scaled = angle_z_gyro_scaled % TEMP;
 
 	// calculate gyro x, y and z angles
-	angle_x_gyro = angle_x_gyro_scaled / 2000000 / GYRO_SENS;
-	angle_y_gyro = angle_y_gyro_scaled / 2000000 / GYRO_SENS;
-	angle_z_gyro = angle_z_gyro_scaled / 2000000 / GYRO_SENS;
+	angle_x_gyro = angle_x_gyro_scaled / (2000000 * GYRO_SENS);
+	//angle_y_gyro = angle_y_gyro_scaled / (2000000 * GYRO_SENS);
+	//angle_z_gyro = angle_z_gyro_scaled / (2000000 * GYRO_SENS);
+}
+
+// caclulate accel x angle of BB1 in degrees, which, compared to accel x angle, is corrected by the error caused by robot acceleration
+void calc_accelAngleX_real(float angle_x_accel, float velocity, float& angle_x_accel_real) {
+	static float velocity_old = 0;
+	static float acceleration;
+	
+	acceleration = ema_filter((velocity - velocity_old) / dT, acceleration, EMA_ALPHA_ACCELERATION);
+
+	// caclulate accel x angle of BB1 in degrees
+	angle_x_accel_real = angle_x_accel - RAD2DEG * atan2(acceleration, G);
+
+	//DEBUG_PRINT((velocity - velocity_old) / dT); DEBUG_PRINT("\t"); DEBUG_PRINTLN(acceleration);
+	
+	// update old velocity
+	velocity_old = velocity;
 }
 
 // print display
-void printDisplay(int8_t mode, float velocity_M1, float velocity_M2, float angle_x_KF){
+void printDisplay(int8_t mode, float velocity_M1, float velocity_M2, float angle_x_KF) {
 	static const int32_t LCD_REFRESH_TIME = 500000;
 	static int32_t LCD_time = 0;
 	
@@ -803,7 +846,7 @@ void printDisplay(int8_t mode, float velocity_M1, float velocity_M2, float angle
 		{
 			case 1:
 			lcd.setCursor (5, 1);
-			LCD_temp2 = round(velocity_M1 / 100);
+			LCD_temp2 = round(velocity_M1 * 0.01);
 			LCD_temp1 = abs(LCD_temp2 / 10);
 			LCD_temp2 = abs(LCD_temp2 % 10);
 			if (velocity_M1 >= 0) {
@@ -815,7 +858,7 @@ void printDisplay(int8_t mode, float velocity_M1, float velocity_M2, float angle
 			lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
 			
 			lcd.setCursor (10, 1);
-			LCD_temp2 = round(velocity_M2 / 100);
+			LCD_temp2 = round(velocity_M2 * 0.01);
 			LCD_temp1 = abs(LCD_temp2 / 10);
 			LCD_temp2 = abs(LCD_temp2 % 10);
 			if (velocity_M2 >= 0) {
@@ -845,7 +888,7 @@ void printDisplay(int8_t mode, float velocity_M1, float velocity_M2, float angle
 			lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
 			
 			lcd.setCursor (5, 3);
-			LCD_temp2 = round((float) dt / 100);
+			LCD_temp2 = round(dt * 0.01);
 			LCD_temp1 = abs(LCD_temp2 / 10);
 			LCD_temp2 = abs(LCD_temp2 % 10);
 			if (LCD_temp1 < 10) {
@@ -859,7 +902,7 @@ void printDisplay(int8_t mode, float velocity_M1, float velocity_M2, float angle
 			static char line_1[7], line_2[6], line_3[4];
 			static uint16_t pos;
 			
-			LCD_temp2 = round(velocity_M1 / 100);
+			LCD_temp2 = round(velocity_M1 * 0.01);
 			LCD_temp1 = abs(LCD_temp2 / 10);
 			LCD_temp2 = abs(LCD_temp2 % 10);
 			if (velocity_M1 >= 0) {
@@ -869,7 +912,7 @@ void printDisplay(int8_t mode, float velocity_M1, float velocity_M2, float angle
 			pos = sprintf(line_1, "%c%u%u", '-', LCD_temp1, LCD_temp2);
 			}
 			
-			LLCD_temp2 = round(velocity_M2 / 100);
+			LCD_temp2 = round(velocity_M2 * 0.01);
 			LCD_temp1 = abs(LCD_temp2 / 10);
 			LCD_temp2 = abs(LCD_temp2 % 10);
 			if (velocity_M2 >= 0) {
@@ -895,7 +938,7 @@ void printDisplay(int8_t mode, float velocity_M1, float velocity_M2, float angle
 			sprintf(line_2 + pos, "%c%u%u", '-', LCD_temp1, LCD_temp2);
 			}
 			
-			LCD_temp2 = round((float) dt / 100);
+			LCD_temp2 = round(dt * 0.01);
 			LCD_temp1 = LCD_temp2 / 10;
 			LCD_temp2 = LCD_temp2 % 10;
 			if (LCD_temp1 < 10) {
@@ -966,7 +1009,7 @@ void calibMotion6(const int16_t NUM, const int16_t ACCURACY_ACCEL, const int16_t
 		meanMotion6(NUM, mean_ax, mean_ay, mean_az, mean_gx, mean_gy, mean_gz);
 
 		if ((abs(mean_ax) < ACCURACY_ACCEL) &&
-		(abs(mean_ax) < ACCURACY_ACCEL) &&
+		(abs(mean_ay) < ACCURACY_ACCEL) &&
 		((abs(mean_az - G_LSB) < ACCURACY_ACCEL) && (mean_az >= -G_LSB * pow(2, ACCEL_RANGE + 1) - 1)) &&
 		(abs(mean_gx) < ACCURACY_GYRO) &&
 		(abs(mean_gy) < ACCURACY_GYRO) &&
