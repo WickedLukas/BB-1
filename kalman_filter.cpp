@@ -26,11 +26,11 @@ KalmanFilter::KalmanFilter(float qp_angle_new, float qp_rate_new, float qp_rateB
 	p2 = 0;
 	p3 = 0;
 	p4 = 0;
-	p5 = 1;
+	p5 = 0.1;
 	p6 = 0;
 	p7 = 0;
 	p8 = 0;
-	p9 = 1;
+	p9 = 0.1;
 }
 
 // updates the model error covariance matrix with the current dT
@@ -46,26 +46,26 @@ float KalmanFilter::get_angle(float dT, float rate_new, float angle_new) {
 
 	static float det_inverse;
 	static float z_angle, z_rate;
-  
-  // variables to speed up calculation
-  static float dT2;
-  static float p5_r_gyro;
-  static float p1_r_acc;
-  static float p2p4;
-  static float I_k1;
-  static float I_k4;
-  static float p5_p6_p8_p9;
-  
-  dT2 = dT * dT;
-  
+	
+	// variables to speed up calculation
+	static float dT2;
+	static float p5_r_gyro;
+	static float p1_r_acc;
+	static float p2p4;
+	static float I_k1;
+	static float I_k4;
+	static float p5_p6_p8_p9;
+	
+	dT2 = dT * dT;
+	
 	calc_Q(dT, dT2);
 
 	//--------------------------------Update--------------------------------
-  
-  p5_r_gyro = p5 + r_gyro;
-  p1_r_acc = p1 + r_acc;
-  p2p4 = p2 * p4;
-  
+	
+	p5_r_gyro = p5 + r_gyro;
+	p1_r_acc = p1 + r_acc;
+	p2p4 = p2 * p4;
+	
 	// Kalman gain
 	// K = P(k) * H' * (H * P(k) * H' + R)^(-1)
 	det_inverse = 1 / (p1_r_acc * p5_r_gyro - p2p4);
@@ -89,9 +89,9 @@ float KalmanFilter::get_angle(float dT, float rate_new, float angle_new) {
 	// filtered angle
 	angle_filtered = angle;
 
-  I_k1 = 1 - k1;
-  I_k4 = 1 - k4;
-  
+	I_k1 = 1 - k1;
+	I_k4 = 1 - k4;
+	
 	// update state error
 	// P(k) = (I - K(k) * H) * P(k)
 	p1 = I_k1 * p1 - k2 * p4;
@@ -111,8 +111,8 @@ float KalmanFilter::get_angle(float dT, float rate_new, float angle_new) {
 	angle += dT * (rate_new - rateBias);
 	rate -= rateBias;
 
-  p5_p6_p8_p9 = p5 - p6 - p8 + p9;
-  
+	p5_p6_p8_p9 = p5 - p6 - p8 + p9;
+	
 	// predict state error
 	// P(k+1) = Phi * P(k) * Phi' + Q
 	p1 += dT * (p2 - p3 + p4 - p7) + dT2 * p5_p6_p8_p9 + q_angle;

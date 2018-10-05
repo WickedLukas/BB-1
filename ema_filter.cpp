@@ -8,10 +8,10 @@
 
 #include "ema_filter.h"
 
-float ema_filter(float current_value, float previous_value, const float EMA_ALPHA) {
-	static float filtered_value; 
+float ema_filter(float current_value, float previous_value, float ema_alpha) {
+	static float filtered_value;
 	
-	filtered_value = EMA_ALPHA * current_value + (1 - EMA_ALPHA) * previous_value;
+	filtered_value = ema_alpha * current_value + (1 - ema_alpha) * previous_value;
 	
 	return filtered_value;
 }

@@ -9,6 +9,6 @@
 #ifndef __EMA_FILTER_H__
 #define __EMA_FILTER_H__
 
-float ema_filter(float current_value, float previous_value, const float EMA_ALPHA);
+float ema_filter(float current_value, float previous_value, float ema_alpha);
 
 #endif //__EMA_FILTER_H__

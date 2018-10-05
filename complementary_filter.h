@@ -9,7 +9,6 @@
 #ifndef __COMPLEMENTARY_FILTER_H__
 #define __COMPLEMENTARY_FILTER_H__
 
-void complementaryFilter(float& angle_x_filtered, float& angle_y_filtered, float dT, float delta_angle_x_gyro, float delta_angle_y_gyro,
-float angle_x_accel, float angle_y_accel, const float C_FILTER_T);
+void complementaryFilter(float dT, float delta_angle_x_gyro, float delta_angle_y_gyro, float angle_x_accel, float angle_y_accel, float c_filter_t, float& angle_x_filtered, float& angle_y_filtered);
 
 #endif //__COMPLEMENTARY_FILTER_H__
