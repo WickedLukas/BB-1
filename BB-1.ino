@@ -66,7 +66,7 @@ const float EMA_ALPHA_VELOCITY = 0.4;
 
 // sample rate = gyroscope output rate / (1 + SAMPLE_RATE_DIVIDER)
 // gyroscope output rate is 8kHz for DLPF_MODE MPU6050_DLPF_BW_256 else 1 kHz
-const char SAMPLE_RATE_DIVIDER = 9;
+const char SAMPLE_RATE_DIVIDER = 6;
 
 // targeted MPU update time in microseconds
 int32_t mpu_update_time;
@@ -126,7 +126,8 @@ int16_t enc_count_M1, enc_count_M2;
 
 // Kalman filter class
 // parameters: qp_angle, qp_rate, qp_rateBias, r_acc, r_gyro, angle
-KalmanFilter kalmanFilter_x(0.2, 0.01, 0.001, 0.3, 0.0001, 0);	// previous parameters: (0.2, 0.01, 0.001, 0.03, 0.001, 0) ;previous parameters (old Kalman): (0.1, 0.01, 0.001, 0.5, 0.0001, 0), qp_rate to r_gyro ratio is important
+// r_acc can maybe be reduced, to speed up rateBias and angle offset approximation, if angle_x is used for Kalman filter
+KalmanFilter kalmanFilter_x(10000, 10000000000, 0.0000000001, 250000, 0.00000001, 0);	// for dT = 0.07s; (10000, 10000000000, 0.0000000001, 250000, 0.00000001, 0);
 
 // turn on PID tuning with potentiometers
 boolean tunePID = false;
@@ -142,9 +143,9 @@ float I_velovcity = 0;
 float D_velovcity = 0;
 
 // PID values for delta velocity controller
-float P_deltaVelovcity = 0;
-float I_deltaVelovcity = 0;
-float D_deltaVelovcity = 0;
+float P_deltaVelovcity = 0.7;   // 0.7
+float I_deltaVelovcity = 3.0;   // 3.0
+float D_deltaVelovcity = 0.005; // 0.005 with EMA_ALPHA_VELOCITY = 0.4
 
 // PID controller classes for angle (mpu) and velocity (encoder)
 PID_controller pid_angle_x(P_angle, I_angle, D_angle, 0, 15, 255);
@@ -307,13 +308,13 @@ void setup() {
 	DEBUG_PRINTLN(F("Calibration completed.\n"));
 	#else
 	// use offsets from previous calibration
-	mpu.setXAccelOffset(-459);
-	mpu.setYAccelOffset(2591);
-	mpu.setZAccelOffset(1216);
+	mpu.setXAccelOffset(-459);  //  -459
+	mpu.setYAccelOffset(2591);  //  2591
+	mpu.setZAccelOffset(1216);  //  1216
 
-	mpu.setXGyroOffset(29);
-	mpu.setYGyroOffset(28);
-	mpu.setZGyroOffset(28);
+	mpu.setXGyroOffset(29); //  29
+	mpu.setYGyroOffset(28); //  28
+	mpu.setZGyroOffset(28); //  28
 	#endif
 }
 
@@ -336,13 +337,25 @@ void loop() {
 	// calculate velocities from encoder data
 	calc_velocities(velocity_M1, velocity_M2);
 	
-	// filtered motor 1 and motor 2 velocities
+	// EMA filtered motor 1 and motor 2 velocities
 	static float velocity_M1_filtered = velocity_M1;
 	static float velocity_M2_filtered = velocity_M2;
 	// filter velocities
 	velocity_M1_filtered = ema_filter(velocity_M1, velocity_M1_filtered, EMA_ALPHA_VELOCITY);
 	velocity_M2_filtered = ema_filter(velocity_M2, velocity_M2_filtered, EMA_ALPHA_VELOCITY);
-
+	
+	/*
+	//DEMA filtered motor 1 and motor 2 velocities
+	const float EMA_BETA_VELOCITY = EMA_ALPHA_VELOCITY;
+	static float velocity_M1_filtered_old = velocity_M1_filtered;
+	static float velocity_M2_filtered_old = velocity_M2_filtered;
+	velocity_M1_filtered = 2 * velocity_M1_filtered - ema_filter(velocity_M1_filtered, velocity_M1_filtered_old, EMA_BETA_VELOCITY);
+	velocity_M2_filtered = 2 * velocity_M2_filtered - ema_filter(velocity_M2_filtered, velocity_M2_filtered_old, EMA_BETA_VELOCITY);
+	
+	velocity_M1_filtered_old = velocity_M1_filtered;
+	velocity_M2_filtered_old = velocity_M2_filtered;
+	*/
+	
 	// average filtered velocity
 	static float velocity_filtered;
 	velocity_filtered = (velocity_M1_filtered + velocity_M1_filtered) * 0.5;
@@ -438,6 +451,9 @@ void loop() {
 	// receive update from BB-1_Remote
 	remote_update(velocity_sp, deltaVelocity_sp);
 	
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINT(rate_x_gyro); DEBUG_PRINT("\t"); DEBUG_PRINTLN(kalmanFilter_x.get_rateBias());
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINT(rate_x_gyro); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_accel);
+	
 	static boolean failsafe = false;
 	// enter failsafe if angle is too high
 	if (abs(angle_x_KF) > ANGLE_MAX) {
@@ -503,27 +519,45 @@ void loop() {
 
 
 
-	static uint32_t test;
-	test = millis();
-	static uint32_t test0 = test;
+	static uint16_t t;
+	t = millis();
+	static uint16_t t0 = t;
 	
-	static float testSpeed = 0;
-	static int16_t testDeltaSpeed = 0;
-
-	if ((test - test0) > 2000) {
-		testSpeed = 250 * sin(0.005 * (test - test0));
-	}
-
-	if (((test - test0) > 22000)) {
-		testSpeed = 0;
-		test0 = test;
+	static float test_M = 0;
+	static float test_deltaM = 0;
+	
+	static float amplitude = 0.7;
+	static float amplitude_delta = 0.35;
+	
+	static float min_frequency = 0.05;  // 0.1
+	static float max_frequency = 1;     // 2.0
+	static float min_frequency_delta = 0.125;
+	static float max_frequency_delta = 2.5;
+	static float offset_delta = (2 * PI) * 0;
+	
+	static float frequency;
+	static float frequency_delta;
+	
+	frequency = min_frequency + (max_frequency - min_frequency) * ((t - t0) * 0.0001);
+	frequency_delta = min_frequency_delta + (max_frequency_delta - min_frequency_delta) * ((t - t0) * 0.0001);
+	
+	if ((t - t0) > 3000) {
+		test_M = amplitude * 255 * sin(frequency * 0.006283 * (t - t0));
+		test_deltaM = amplitude_delta * 255 * sin(frequency_delta * 0.006283 * (t - t0) + offset_delta);
+		if (((t - t0) > 13000)) {
+			test_M = 0;
+			test_deltaM = 0;
+			t0 = t;
+		}
 	}
 	
 	
 	
 	// set motor velocities
 	//md.setVelocities(constrain(round(mv_M - mv_deltaM), -255, 255), constrain(round(mv_M + mv_deltaM)), -min_mv, max_mv);
-	md.setVelocities(constrain(round(testSpeed - mv_deltaM), -255, 255), constrain(round(testSpeed + testDeltaSpeed + mv_deltaM), -255, 255));
+	md.setVelocities(constrain(round(test_M - mv_deltaM), -255, 255), constrain(round(test_M + test_deltaM + mv_deltaM), -255, 255));
+	//md.setVelocities(constrain(round(test_M), -255, 255), constrain(round(test_M), -255, 255));
+	//md.setVelocities(test_M, test_M);
 	//md.setVelocities(0, 0);
 	
 	// check if motor shield reports error
@@ -541,15 +575,22 @@ void loop() {
 	//DEBUG_PRINT(gx); DEBUG_PRINT("\t"); DEBUG_PRINT(gy); DEBUG_PRINT("\t"); DEBUG_PRINTLN(gz);
 	
 	//DEBUG_PRINT(enc_count_M1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(enc_count_M2);
-
-	//DEBUG_PRINT(velocity_M1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_M2);
+	
+	//DEBUG_PRINT(test_M); DEBUG_PRINT("\t"); DEBUG_PRINT(test_deltaM);  DEBUG_PRINT("\t"); DEBUG_PRINTLN(test_M + test_deltaM);
+	DEBUG_PRINT(velocity_M1_filtered); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_M2_filtered);
+	
+	//DEBUG_PRINT((velocity_M1 + velocity_M2) * 0.5); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_filtered);
+	
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINT(rate_x_gyro); DEBUG_PRINT("\t"); DEBUG_PRINTLN(kalmanFilter_x.get_rateBias());
 	
 	//DEBUG_PRINTLN(dt);
 	
 	//DEBUG_PRINT(velocity_sp); DEBUG_PRINT("\t"); DEBUG_PRINTLN(deltaVelocity_sp);
 	
-	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_accel); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_gyro);
-	DEBUG_PRINT(angle_x_accel); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_gyro);
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_gyro);
+	
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINTLN(kalmanFilter_x.get_rateBias());
+	//DEBUG_PRINT(angle_x_accel); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_gyro);
 	
 	//DEBUG_PRINTLN(line_1);
 	//DEBUG_PRINTLN(line_2);

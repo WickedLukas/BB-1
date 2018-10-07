@@ -21,23 +21,23 @@ KalmanFilter::KalmanFilter(float qp_angle_new, float qp_rate_new, float qp_rateB
 	rate = 0;
 	rateBias = 0;
 
-	// assumption: initial state is unknown
-	p1 = 1;
+	// initial state is unknown - higher numbers will speed up estimation of unknown variables
+	p1 = 1000000;
 	p2 = 0;
 	p3 = 0;
 	p4 = 0;
-	p5 = 0.1;
+	p5 = 2000;
 	p6 = 0;
 	p7 = 0;
 	p8 = 0;
-	p9 = 0.1;
+	p9 = 5;
 }
 
 // updates the model error covariance matrix with the current dT
 void KalmanFilter::calc_Q(float dT, float dT2) {
 	q_angle		= qp_angle * 0.5 * dT2;
 	q_rate		= qp_rate * dT;
-	q_rateBias	= qp_rateBias * dT;
+	q_rateBias	= qp_rateBias;
 }
 
 // calculates the Kalman filtered angle (1-D)
