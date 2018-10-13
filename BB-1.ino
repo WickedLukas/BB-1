@@ -358,7 +358,7 @@ void loop() {
 	
 	// average filtered velocity
 	static float velocity_filtered;
-	velocity_filtered = (velocity_M1_filtered + velocity_M1_filtered) * 0.5;
+	velocity_filtered = (velocity_M1_filtered + velocity_M2_filtered) * 0.5;
 	
 	// accel angles
 	static float angle_x_accel, angle_y_accel;
