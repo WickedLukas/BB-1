@@ -107,10 +107,10 @@ float PID_controller::get_mv(float sp, float pv, float dT) {
 void PID_controller::constrain_mv() {
 	// Increase the manipulated variable |mv| to the minimum (example: the minimum at which the motors start rotating).
 	// If the control variable is within (-min_mv_tol, min_mv_tol), it is set to zero (example: to avoid permanent switching between negative and positive minimum values).
-	if (mv <= -min_mv_tol) {
+	if (mv < -min_mv_tol) {
 		mv -= min_mv;
 	}
-	else if (mv >= min_mv_tol) {
+	else if (mv > min_mv_tol) {
 		mv += min_mv;
 	}
 	else {

@@ -132,25 +132,25 @@ KalmanFilter kalmanFilter_x(10000, 10000000000, 0.0000000001, 250000, 0.00000001
 // turn on PID tuning with potentiometers
 boolean tunePID = false;
 
-// PID values for angle controller (will currently be overwritten by potentiometer measurement)
-float P_angle = 6;
-float I_angle = 0;
-float D_angle = 0;
+// PID values for angle controller (will only be used when tunePID flag is set)
+float P_angle = 0;	// 5.0
+float I_angle = 0;	// 0.5
+float D_angle = 0;	// 0.15
 
 // PID values for velocity controller
-float P_velovcity = 0;
-float I_velovcity = 0;
-float D_velovcity = 0;
+float P_velocity = 0;	// 0.005
+float I_velocity = 0;	// 0.001
+float D_velocity = 0;
 
 // PID values for delta velocity controller
-float P_deltaVelovcity = 0.7;   // 0.7
-float I_deltaVelovcity = 3.0;   // 3.0
-float D_deltaVelovcity = 0.005; // 0.005 with EMA_ALPHA_VELOCITY = 0.4
+float P_deltaVelocity = 0;	// 0.7
+float I_deltaVelocity = 0;	// 3.0
+float D_deltaVelocity = 0;	// 0.005 tested with EMA_ALPHA_VELOCITY = 0.4
 
 // PID controller classes for angle (mpu) and velocity (encoder)
 PID_controller pid_angle_x(P_angle, I_angle, D_angle, 0, 15, 255);
-PID_controller pid_velocity_y(P_velovcity, I_velovcity, D_velovcity, 0, 0, ANGLE_LIMIT);
-PID_controller pid_deltaVelocity_y(P_deltaVelovcity, I_deltaVelovcity, D_deltaVelovcity, 0, 0, 510);
+PID_controller pid_velocity_y(P_velocity, I_velocity, D_velocity, 0, 0, ANGLE_LIMIT);
+PID_controller pid_deltaVelocity_y(P_deltaVelocity, I_deltaVelocity, D_deltaVelocity, 0, 0, 510);
 
 // motor controller class
 DualMC33926MotorShield md(11, 9, A0, 8, 10, A1, 4, 12);	// remap M1DIR from pin 7 to pin 11
@@ -413,7 +413,7 @@ void loop() {
 	static float angle_x_KF;
 
 	// calculate Kalman filtered x and y angles
-	angle_x_KF = kalmanFilter_x.get_angle(dT, rate_x_gyro, angle_x_accel);
+	angle_x_KF = kalmanFilter_x.get_angle(dT, rate_x_gyro, angle_x);
 	
 	// KALMAN FILTER
 	//--------------------------------------------------------------------------------------------------------------------------------------------
@@ -473,7 +473,7 @@ void loop() {
 		}
 		
 		// print display with PID values
-		printDisplay(refresh, 2, velocity_M1_filtered, velocity_M2_filtered, angle_x_KF);
+		//printDisplay(refresh, 2, velocity_M1_filtered, velocity_M2_filtered, angle_x_KF);
 		
 		return;
 	}
@@ -519,7 +519,8 @@ void loop() {
 
 
 
-	static uint16_t t;
+	/*// generate synthetic motor control inputs to test PIDs and filters - run it only without tires on!
+ 	static uint16_t t;
 	t = millis();
 	static uint16_t t0 = t;
 	
@@ -549,13 +550,13 @@ void loop() {
 			test_deltaM = 0;
 			t0 = t;
 		}
-	}
+	}*/
 	
 	
 	
 	// set motor velocities
-	//md.setVelocities(constrain(round(mv_M - mv_deltaM), -255, 255), constrain(round(mv_M + mv_deltaM)), -min_mv, max_mv);
-	md.setVelocities(constrain(round(test_M - mv_deltaM), -255, 255), constrain(round(test_M + test_deltaM + mv_deltaM), -255, 255));
+	md.setVelocities(constrain(round(mv_M - mv_deltaM), -255, 255), constrain(round(mv_M + mv_deltaM), -255, 255));
+	//md.setVelocities(constrain(round(test_M - mv_deltaM), -255, 255), constrain(round(test_M + test_deltaM + mv_deltaM), -255, 255));
 	//md.setVelocities(constrain(round(test_M), -255, 255), constrain(round(test_M), -255, 255));
 	//md.setVelocities(test_M, test_M);
 	//md.setVelocities(0, 0);
@@ -570,27 +571,28 @@ void loop() {
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	// SERIAL DEBUG
 	//--------------------------------------------------------------------------------------------------------------------------------------------
-	
+
+  //DEBUG_PRINT(ax); DEBUG_PRINT("\t"); DEBUG_PRINT(ay); DEBUG_PRINT("\t"); DEBUG_PRINTLN(az);
 	//DEBUG_PRINT(ax); DEBUG_PRINT("\t"); DEBUG_PRINT(ay); DEBUG_PRINT("\t"); DEBUG_PRINTLN(az);
 	//DEBUG_PRINT(gx); DEBUG_PRINT("\t"); DEBUG_PRINT(gy); DEBUG_PRINT("\t"); DEBUG_PRINTLN(gz);
 	
 	//DEBUG_PRINT(enc_count_M1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(enc_count_M2);
 	
 	//DEBUG_PRINT(test_M); DEBUG_PRINT("\t"); DEBUG_PRINT(test_deltaM);  DEBUG_PRINT("\t"); DEBUG_PRINTLN(test_M + test_deltaM);
-	DEBUG_PRINT(velocity_M1_filtered); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_M2_filtered);
+	//DEBUG_PRINT(velocity_M1_filtered); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_M2_filtered);
 	
-	//DEBUG_PRINT((velocity_M1 + velocity_M2) * 0.5); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_filtered);
+	//DEBUG_PRINT((velocity_M1 + velocity_M2) * 0.5); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity);
 	
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINT(rate_x_gyro); DEBUG_PRINT("\t"); DEBUG_PRINTLN(kalmanFilter_x.get_rateBias());
 	
 	//DEBUG_PRINTLN(dt);
 	
 	//DEBUG_PRINT(velocity_sp); DEBUG_PRINT("\t"); DEBUG_PRINTLN(deltaVelocity_sp);
-	
-	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_gyro);
+	DEBUG_PRINTLN(angle_x_sp);
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_accel); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_gyro);
 	
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINTLN(kalmanFilter_x.get_rateBias());
-	//DEBUG_PRINT(angle_x_accel); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_gyro);
+	//DEBUG_PRINT(angle_x_accel); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x); DEBUG_PRINTLN("\t"); DEBUG_PRINTLN(angle_x_gyro);
 	
 	//DEBUG_PRINTLN(line_1);
 	//DEBUG_PRINTLN(line_2);
@@ -858,7 +860,7 @@ void calc_angleX(float angle_x_accel, float velocity, float& angle_x) {
 	static float velocity_old = velocity;
 
 	// calculate x angle of BB1 in degrees
-	angle_x = angle_x_accel - RAD2DEG * atan2((velocity - velocity_old) / dT, G);
+	angle_x = angle_x_accel + RAD2DEG * atan2((velocity - velocity_old) / dT, G);
 	
 	// update old velocity
 	velocity_old = velocity;
