@@ -46,7 +46,7 @@ boolean refresh = true;
 // initialization flag, necessary to calculate starting values
 boolean first;
 
-// specifies timeout for bluetooth communication with BB1-Remote in microseconds
+// specifies timeout for bluetooth communication with BB-1 remote in microseconds
 const int32_t REMOTE_TIMEOUT = 100000;
 
 // maximum number of chars sent in one serial message
@@ -61,8 +61,14 @@ const float G = 9811;
 // configuration for digital low pass filter
 const char DLPF_MODE = MPU6050_DLPF_BW_42;
 
-// configuration for an exponential moving average filter used to filter the robot velocity, calculated from the wheel encoder values
-const float EMA_ALPHA_VELOCITY = 0.4;
+// configuration for an exponential moving average filter used to filter the BB-1 velocity, calculated from the wheel encoder values
+const float EMA_ALPHA_VELOCITY = 0.05;
+
+// configuration for an exponential moving average filter used to filter the velocity setpoint received from the BB-1 remote
+const float EMA_ALPHA_VELOCITY_SP = 0.01;
+
+// configuration for an exponential moving average filter used to filter the delta velocity setpoint received from the BB-1 remote
+const float EMA_ALPHA_DELTAVELOCITY_SP = 0.005;
 
 // sample rate = gyroscope output rate / (1 + SAMPLE_RATE_DIVIDER)
 // gyroscope output rate is 8kHz for DLPF_MODE MPU6050_DLPF_BW_256 else 1 kHz
@@ -109,10 +115,10 @@ const float ANGLE_LIMIT = 45;
 const float VELOCITY_MAX = PI * MOTOR_RPM * TIRE_DIAMETER / 60;
 
 // maximum allowed velocity for BB-1
-const float VELOCITY_LIMIT = 0.2 * VELOCITY_MAX;
+const float VELOCITY_LIMIT = 0.4 * VELOCITY_MAX;
 
 // maximum allowed delta velocity for BB-1
-const float DELTA_VELOCITY_LIMIT = VELOCITY_LIMIT;
+const float DELTA_VELOCITY_LIMIT = VELOCITY_LIMIT / 3;
 
 // MPU raw measurements
 int16_t ax, ay, az;
@@ -133,22 +139,22 @@ KalmanFilter kalmanFilter_x(10000, 10000000000, 0.0000000001, 250000, 0.00000001
 boolean tunePID = false;
 
 // PID values for angle controller (will only be used when tunePID flag is set)
-float P_angle = 0;	// 5.0
-float I_angle = 0;	// 0.5
-float D_angle = 0;	// 0.15
+float P_angle = 8;		// 8
+float I_angle = 0;		// 0
+float D_angle = 0.4;	// 0.4
 
 // PID values for velocity controller
-float P_velocity = 0;	// 0.005
-float I_velocity = 0;	// 0.001
-float D_velocity = 0;
+float P_velocity = 0.035;	// 0.025
+float I_velocity = 0;		// 0
+float D_velocity = 0;		// 0
 
 // PID values for delta velocity controller
-float P_deltaVelocity = 0;	// 0.7
-float I_deltaVelocity = 0;	// 3.0
-float D_deltaVelocity = 0;	// 0.005 tested with EMA_ALPHA_VELOCITY = 0.4
+float P_deltaVelocity = 0.7;	// 0.7
+float I_deltaVelocity = 1.5;	// 3.0
+float D_deltaVelocity = 0.005;	// 0.005 tested with EMA_ALPHA_VELOCITY = 0.4
 
 // PID controller classes for angle (mpu) and velocity (encoder)
-PID_controller pid_angle_x(P_angle, I_angle, D_angle, 0, 15, 255);
+PID_controller pid_angle_x(P_angle, I_angle, D_angle, 0, 0, 255);
 PID_controller pid_velocity_y(P_velocity, I_velocity, D_velocity, 0, 0, ANGLE_LIMIT);
 PID_controller pid_deltaVelocity_y(P_deltaVelocity, I_deltaVelocity, D_deltaVelocity, 0, 0, 510);
 
@@ -176,10 +182,10 @@ bool blinkState = false;
 // MPU interrupt status byte
 uint8_t mpuIntStatus;
 
-// update from BB-1_Remote
+// update from BB-1 remote
 void remote_update(int16_t& velocity_sp, int16_t& deltaVelocity_sp);
 
-// get data from BB-1_Remote
+// get data from BB-1 remote
 boolean getData(char order, char* receivedChars, boolean& remoteConnection, boolean& requestRemoteData);
 
 // update velocity setpoints
@@ -197,7 +203,7 @@ void calc_accelAngles(float& angle_x_accel, float& angle_y_accel);
 // calculate gyro x, y and z angles in degrees (not necessary for filters)
 void calc_gyroAngles(float& angle_x_gyro, float& angle_y_gyro, float& angle_z_gyro);
 
-// calculate x angle of BB1 in degrees, which, compared to accel x angle, is corrected by the error caused by robot acceleration
+// calculate x angle of BB1 in degrees, which, compared to accel x angle, is corrected by the error caused by BB-1 acceleration
 void calc_angleX(float angle_x_accel, float velocity, float& angle_x);
 
 // print display
@@ -222,7 +228,7 @@ void dataReady() {
 // Debug output is now working even on ATMega328P MCUs (e.g. Arduino Uno)
 // after moving string constants to flash memory storage using the F()
 // compiler macro (Arduino IDE 1.0+ required).
-#define DEBUG
+//#define DEBUG
 
 #ifdef DEBUG
 #define DEBUG_PRINT(x) Serial.print(x)
@@ -252,7 +258,7 @@ void setup() {
 	while (!Serial); // wait for Leonardo eNUMeration, others continue immediately
 	#endif
 	
-	// initialize serial1 communication for BB-1_Remote through HC-05 bluetooth modules
+	// initialize serial1 communication for BB-1 remote through HC-05 bluetooth modules
 	Serial1.begin(115200);
 	while (!Serial1); // wait for Leonardo eNUMeration, others continue immediately
 
@@ -298,7 +304,7 @@ void setup() {
 	
 	#ifdef PERFORM_MPU_CALIBRATION
 	// calibration parameter
-	const int16_t NUM = 100;
+	const int16_t NUM = 500;
 	const int16_t ACCURACY_ACCEL = 9;
 	const int16_t ACCURACY_GYRO = 4;
 	
@@ -308,13 +314,13 @@ void setup() {
 	DEBUG_PRINTLN(F("Calibration completed.\n"));
 	#else
 	// use offsets from previous calibration
-	mpu.setXAccelOffset(-459);  //  -459
-	mpu.setYAccelOffset(2591);  //  2591
-	mpu.setZAccelOffset(1216);  //  1216
+	mpu.setXAccelOffset(-423);  //  -449, -459
+	mpu.setYAccelOffset(2551);  //  2496, 2591
+	mpu.setZAccelOffset(1226);  //  1241, 1216
 
-	mpu.setXGyroOffset(29); //  29
-	mpu.setYGyroOffset(28); //  28
-	mpu.setZGyroOffset(28); //  28
+	mpu.setXGyroOffset(23); //  20, 29
+	mpu.setYGyroOffset(34); //  29, 28
+	mpu.setZGyroOffset(27); //  29, 28
 	#endif
 }
 
@@ -344,18 +350,6 @@ void loop() {
 	velocity_M1_filtered = ema_filter(velocity_M1, velocity_M1_filtered, EMA_ALPHA_VELOCITY);
 	velocity_M2_filtered = ema_filter(velocity_M2, velocity_M2_filtered, EMA_ALPHA_VELOCITY);
 	
-	/*
-	//DEMA filtered motor 1 and motor 2 velocities
-	const float EMA_BETA_VELOCITY = EMA_ALPHA_VELOCITY;
-	static float velocity_M1_filtered_old = velocity_M1_filtered;
-	static float velocity_M2_filtered_old = velocity_M2_filtered;
-	velocity_M1_filtered = 2 * velocity_M1_filtered - ema_filter(velocity_M1_filtered, velocity_M1_filtered_old, EMA_BETA_VELOCITY);
-	velocity_M2_filtered = 2 * velocity_M2_filtered - ema_filter(velocity_M2_filtered, velocity_M2_filtered_old, EMA_BETA_VELOCITY);
-	
-	velocity_M1_filtered_old = velocity_M1_filtered;
-	velocity_M2_filtered_old = velocity_M2_filtered;
-	*/
-	
 	// average filtered velocity
 	static float velocity_filtered;
 	velocity_filtered = (velocity_M1_filtered + velocity_M2_filtered) * 0.5;
@@ -372,9 +366,10 @@ void loop() {
 	
 	// angle x of BB1
 	static float angle_x;
-	// calculate x angle of BB1 in degrees, which, compared to accel x angle, is corrected by the error caused by robot acceleration
+	// calculate x angle of BB1 in degrees, which, compared to accel x angle, is corrected by the error caused by BB-1 acceleration
 	calc_angleX(angle_x_accel, velocity_filtered, angle_x);
 	
+	/*
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	// COMPLEMENTARY FILTER
 
@@ -392,11 +387,12 @@ void loop() {
 	//delta_angle_y_gyro = dT * (gy0 + gy) / (2 * GYRO_SENS);
 	
 	// calculate complementary filtered x and y angles
-	complementaryFilter(dT, delta_angle_x_gyro, delta_angle_y_gyro, angle_x_accel, angle_y_accel, C_FILTER_T, angle_x_CF, angle_y_CF);
+	complementaryFilter(dT, delta_angle_x_gyro, delta_angle_y_gyro, angle_x, angle_y_accel, C_FILTER_T, angle_x_CF, angle_y_CF);
 
 	// COMPLEMENTARY FILTER
 	//--------------------------------------------------------------------------------------------------------------------------------------------
-
+	*/
+	
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	// KALMAN FILTER
 	
@@ -444,16 +440,27 @@ void loop() {
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	// NAVIGATION
 	
-	// velocity setpoint according to BB-1_Remote data (determines the speed at which BB-1 is moving forward)
+	// velocity setpoint according to BB-1 remote data (determines the speed at which BB-1 is moving forward)
 	static int16_t velocity_sp = 0;
-	// delta velocity setpoint according to BB-1_Remote data (determines the speed at which BB-1 is turning)
+	// delta velocity setpoint according to BB-1 remote data (determines the speed at which BB-1 is turning)
 	static int16_t deltaVelocity_sp = 0;
-	// receive update from BB-1_Remote
+	// receive update from BB-1 remote
 	remote_update(velocity_sp, deltaVelocity_sp);
+	
+	// EMA filtered velocity setpoint
+	static float velocity_sp_filtered = velocity_sp;
+	// filter velocities
+	velocity_sp_filtered = ema_filter(velocity_sp, velocity_sp_filtered, EMA_ALPHA_VELOCITY_SP);
+
+	// EMA filtered delta velocity setpoint
+	static float deltaVelocity_sp_filtered = deltaVelocity_sp;
+	// filter velocities
+	deltaVelocity_sp_filtered = ema_filter(deltaVelocity_sp, deltaVelocity_sp_filtered, EMA_ALPHA_DELTAVELOCITY_SP);
 	
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINT(rate_x_gyro); DEBUG_PRINT("\t"); DEBUG_PRINTLN(kalmanFilter_x.get_rateBias());
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINT(rate_x_gyro); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_accel);
-	
+
+  
 	static boolean failsafe = false;
 	// enter failsafe if angle is too high
 	if (abs(angle_x_KF) > ANGLE_MAX) {
@@ -473,7 +480,7 @@ void loop() {
 		}
 		
 		// print display with PID values
-		//printDisplay(refresh, 2, velocity_M1_filtered, velocity_M2_filtered, angle_x_KF);
+		printDisplay(refresh, 2, velocity_M1, velocity_M2, angle_x_KF);
 		
 		return;
 	}
@@ -485,14 +492,38 @@ void loop() {
 			refresh = true;
 			
 			// print display with sensor values
-			//printDisplay(refresh, 1, velocity_M1_filtered, velocity_M2_filtered, angle_x_KF);
+			printDisplay(refresh, 1, velocity_M1, velocity_M2, angle_x_KF);
 			
 			return;
 		}
 		
 		// print display with sensor values
-		//printDisplay(refresh, 1, velocity_M1_filtered, velocity_M2_filtered, angle_x_KF);
+		printDisplay(first, 1, velocity_M1, velocity_M2, angle_x_KF);
 	}
+
+	
+	// start balancing only if angle (angle_x_KF) is roughly in balance position (angle_x_KF < INIT_ANGLE) for a period of time (INIT_TIME)
+	static boolean init = false;
+	static int32_t init_timer = 0;
+	static const int32_t INIT_TIME = 3000000;
+	static const double INIT_ANGLE = 3;
+	if (first || init) {
+		if (abs(angle_x_KF) < INIT_ANGLE) {
+			init_timer += dt;
+		}
+		else {
+			init_timer = 0;
+		}
+		
+		if (init_timer < INIT_TIME) {
+			init = true;
+			return;
+		}
+		else {
+			init = false;
+			init_timer = 0;
+		}
+  }
 	
 	// NAVIGATION
 	//--------------------------------------------------------------------------------------------------------------------------------------------
@@ -508,7 +539,7 @@ void loop() {
 	static float mv_deltaM;
 	
 	// calculate angle setpoint
-	angle_x_sp = pid_velocity_y.get_mv(velocity_sp, velocity_filtered, dT);
+	angle_x_sp = pid_velocity_y.get_mv(velocity_sp_filtered, velocity_filtered, dT);
 	
 	// calculate control variable
 	mv_M = pid_angle_x.get_mv(angle_x_sp, angle_x_KF, dT);
@@ -581,14 +612,14 @@ void loop() {
 	//DEBUG_PRINT(test_M); DEBUG_PRINT("\t"); DEBUG_PRINT(test_deltaM);  DEBUG_PRINT("\t"); DEBUG_PRINTLN(test_M + test_deltaM);
 	//DEBUG_PRINT(velocity_M1_filtered); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_M2_filtered);
 	
-	//DEBUG_PRINT((velocity_M1 + velocity_M2) * 0.5); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity);
+	//DEBUG_PRINT((velocity_M1 + velocity_M2) * 0.5); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_filtered);
 	
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINT(rate_x_gyro); DEBUG_PRINT("\t"); DEBUG_PRINTLN(kalmanFilter_x.get_rateBias());
 	
 	//DEBUG_PRINTLN(dt);
 	
-	//DEBUG_PRINT(velocity_sp); DEBUG_PRINT("\t"); DEBUG_PRINTLN(deltaVelocity_sp);
-	DEBUG_PRINTLN(angle_x_sp);
+	DEBUG_PRINT(velocity_sp_filtered); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_filtered);
+	//DEBUG_PRINTLN(angle_x_sp);
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_accel); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_gyro);
 	
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINTLN(kalmanFilter_x.get_rateBias());
@@ -601,7 +632,10 @@ void loop() {
 	//DEBUG_PRINT(velocity_M1); DEBUG_PRINT("\t"); DEBUG_PRINT(velocity_M2);  DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_filtered);
 	
 	//DEBUG_PRINT(dt); DEBUG_PRINT("\t"); DEBUG_PRINTLN(mpu_update_time);
-	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_CF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_gyro); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_accel);
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_CF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_gyro); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x);
+	
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_sp); DEBUG_PRINT("\t"); DEBUG_PRINT(velocity_filtered/100); DEBUG_PRINT("\t"); DEBUG_PRINTLN(mv_M/10);
+	
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINTLN(kalmanFilter_x.get_rateBias());
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINTLN(cv_M1_pwm);
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(mv_M); DEBUG_PRINT("\t");
@@ -620,7 +654,7 @@ void loop() {
 	gz0 = gz;
 }
 
-// update from BB-1_Remote
+// update from BB-1 remote
 void remote_update(int16_t& velocity_sp, int16_t& deltaVelocity_sp) {
 	static boolean remoteConnection = false;	// remote connection status
 	static boolean requestRemoteData = true;	// specifies if new data can be requested from remote
@@ -654,7 +688,7 @@ void remote_update(int16_t& velocity_sp, int16_t& deltaVelocity_sp) {
 	}
 }
 
-// get data from BB-1_Remote
+// get data from BB-1 remote
 boolean getData(char order, char* receivedChars, boolean& remoteConnection, boolean& requestRemoteData) {
 	static boolean recvInProgress = false;
 	static byte ndx = 0;
@@ -662,7 +696,7 @@ boolean getData(char order, char* receivedChars, boolean& remoteConnection, bool
 	static int32_t answerTime = 0;	// time since last data request in microseconds
 	
 	if (requestRemoteData) {
-		// request data from BB-1_Remote
+		// request data from BB-1 remote
 		Serial1.print(order);
 		
 		requestRemoteData = false;
@@ -855,7 +889,7 @@ void calc_gyroAngles(float& angle_x_gyro, float& angle_y_gyro, float& angle_z_gy
 	//angle_z_gyro = angle_z_gyro_scaled / (2000000 * GYRO_SENS);
 }
 
-// calculate x angle of BB1 in degrees, which, compared to accel x angle, is corrected by the error caused by robot acceleration
+// calculate x angle of BB1 in degrees, which, compared to accel x angle, is corrected by the error caused by BB-1 acceleration
 void calc_angleX(float angle_x_accel, float velocity, float& angle_x) {
 	static float velocity_old = velocity;
 
