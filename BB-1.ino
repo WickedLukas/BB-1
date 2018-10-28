@@ -64,11 +64,14 @@ const char DLPF_MODE = MPU6050_DLPF_BW_42;
 // configuration for an exponential moving average filter used to filter the BB-1 velocity, calculated from the wheel encoder values
 const float EMA_ALPHA_VELOCITY = 0.03;	// 0.03, 0.04
 
+// configuration for an exponential moving average filter used to filter the BB-1 delta velocity, calculated from the wheel encoder values
+const float EMA_ALPHA_DELTAVELOCITY = 0.3;	// 0.4
+
 // configuration for an exponential moving average filter used to filter the velocity setpoint received from the BB-1 remote
-const float EMA_ALPHA_VELOCITY_SP = 0.01;
+const float EMA_ALPHA_VELOCITY_SP = 0.01;	// 0.01
 
 // configuration for an exponential moving average filter used to filter the delta velocity setpoint received from the BB-1 remote
-const float EMA_ALPHA_DELTAVELOCITY_SP = 0.0025;
+const float EMA_ALPHA_DELTAVELOCITY_SP = 0.1;
 
 // sample rate = gyroscope output rate / (1 + SAMPLE_RATE_DIVIDER)
 // gyroscope output rate is 8kHz for DLPF_MODE MPU6050_DLPF_BW_256 else 1 kHz
@@ -118,7 +121,7 @@ const float VELOCITY_MAX = PI * MOTOR_RPM * TIRE_DIAMETER / 60;
 const float VELOCITY_LIMIT = 0.5 * VELOCITY_MAX;
 
 // maximum allowed delta velocity for BB-1
-const float DELTA_VELOCITY_LIMIT = VELOCITY_LIMIT / 3;
+const float DELTA_VELOCITY_LIMIT = VELOCITY_LIMIT / 4;
 
 // MPU raw measurements
 int16_t ax, ay, az;
@@ -149,14 +152,14 @@ float I_velocity = 0;		// 0.03, 0.03
 float D_velocity = 0;		// 0
 
 // PID values for delta velocity controller
-float P_deltaVelocity = 0.175;	// 0.175, 0.7
-float I_deltaVelocity = 0.1;	// 0.1, 3.0
-float D_deltaVelocity = 0.00125;	// 0.00125, 0.005 tested with EMA_ALPHA_VELOCITY = 0.4
+float P_deltaVelocity = 0.7;	// 0.175, 0.7
+float I_deltaVelocity = 3;	// 0.1, 3.0
+float D_deltaVelocity = 0.005;	// 0.00125, 0.005 tested with EMA_ALPHA_VELOCITY = 0.4
 
 // PID controller classes for angle (mpu) and velocity (encoder)
 PID_controller pid_angle_x(P_angle, I_angle, D_angle, 0, 0, 255);
 PID_controller pid_velocity_y(P_velocity, I_velocity, D_velocity, 0, 0, ANGLE_LIMIT);
-PID_controller pid_deltaVelocity_y(P_deltaVelocity, I_deltaVelocity, D_deltaVelocity, 0, 0, 510);
+PID_controller pid_deltaVelocity_y(P_deltaVelocity, I_deltaVelocity, D_deltaVelocity, 0, 0, 255);
 
 // motor controller class
 DualMC33926MotorShield md(11, 9, A0, 8, 10, A1, 4, 12);	// remap M1DIR from pin 7 to pin 11
@@ -342,17 +345,24 @@ void loop() {
 	static float velocity_M1, velocity_M2;
 	// calculate velocities from encoder data
 	calc_velocities(velocity_M1, velocity_M2);
+
+	// average velocity
+	static float velocity;
+	velocity = (velocity_M1 + velocity_M2) * 0.5;
 	
-	// EMA filtered motor 1 and motor 2 velocities
-	static float velocity_M1_filtered = velocity_M1;
-	static float velocity_M2_filtered = velocity_M2;
-	// filter velocities
-	velocity_M1_filtered = ema_filter(velocity_M1, velocity_M1_filtered, EMA_ALPHA_VELOCITY);
-	velocity_M2_filtered = ema_filter(velocity_M2, velocity_M2_filtered, EMA_ALPHA_VELOCITY);
+	// EMA filtered average velocity
+	static float velocity_filtered = velocity;
+	// filter average velocity
+	velocity_filtered = ema_filter(velocity, velocity_filtered, EMA_ALPHA_VELOCITY);
+
+	// delta velocity
+	static float deltaVelocity;
+	deltaVelocity = (velocity_M1 - velocity_M2) * 0.5;
 	
-	// average filtered velocity
-	static float velocity_filtered;
-	velocity_filtered = (velocity_M1_filtered + velocity_M2_filtered) * 0.5;
+	// EMA filtered delta velocity
+	static float deltaVelocity_filtered = deltaVelocity;
+	// filter delta velocity
+	deltaVelocity_filtered = ema_filter(deltaVelocity, deltaVelocity_filtered, EMA_ALPHA_DELTAVELOCITY);
 	
 	// accel angles
 	static float angle_x_accel, angle_y_accel;
@@ -446,6 +456,15 @@ void loop() {
 	static int16_t deltaVelocity_sp = 0;
 	// receive update from BB-1 remote
 	remote_update(velocity_sp, deltaVelocity_sp);
+
+	/*
+	// make sure maximum velocity is not exceeded when turning
+	static int16_t temp_limit;
+	temp_limit = VELOCITY_LIMIT - abs(round(deltaVelocity_sp));
+	velocity_sp = constrain(velocity_sp, -temp_limit, temp_limit);
+	temp_limit = VELOCITY_LIMIT - abs(round(velocity));
+	deltaVelocity_sp = constrain(deltaVelocity_sp, -temp_limit, temp_limit);
+	*/
 	
 	// EMA filtered velocity setpoint
 	static float velocity_sp_filtered = velocity_sp;
@@ -505,8 +524,8 @@ void loop() {
 	// start balancing only if angle (angle_x_KF) is roughly in balance position (angle_x_KF < INIT_ANGLE) for a period of time (INIT_TIME)
 	static boolean init = false;
 	static int32_t init_timer = 0;
-	static const int32_t INIT_TIME = 2000000;
-	static const double INIT_ANGLE = 3;
+	static const int32_t INIT_TIME = 0;
+	static const double INIT_ANGLE = 1;
 	if (first || init) {
 		if (abs(angle_x_KF) < INIT_ANGLE) {
 			init_timer += dt;
@@ -515,7 +534,7 @@ void loop() {
 			init_timer = 0;
 		}
 		
-		if (init_timer < INIT_TIME) {
+		if (init_timer <= INIT_TIME) {
 			init = true;
 			return;
 		}
@@ -543,7 +562,7 @@ void loop() {
 	
 	// calculate control variable
 	mv_M = pid_angle_x.get_mv(angle_x_sp, angle_x_KF, dT);
-	mv_deltaM = pid_deltaVelocity_y.get_mv(deltaVelocity_sp, (velocity_M1_filtered - velocity_M2_filtered) * 0.5, dT);
+	mv_deltaM = pid_deltaVelocity_y.get_mv(deltaVelocity_sp_filtered, deltaVelocity_filtered, dT);
 	
 	// CASCADED PID CONTROL
 	//--------------------------------------------------------------------------------------------------------------------------------------------
@@ -634,7 +653,9 @@ void loop() {
 	//DEBUG_PRINT(dt); DEBUG_PRINT("\t"); DEBUG_PRINTLN(mpu_update_time);
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_CF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_gyro); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x);
 	
-	DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_sp); DEBUG_PRINT("\t"); DEBUG_PRINT(velocity_filtered/100); DEBUG_PRINT("\t"); DEBUG_PRINTLN(mv_M/10);
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_sp); DEBUG_PRINT("\t"); DEBUG_PRINT(velocity_filtered/100); DEBUG_PRINT("\t"); DEBUG_PRINTLN(mv_M/10);
+	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_sp);
+	DEBUG_PRINT(deltaVelocity); DEBUG_PRINT("\t"); DEBUG_PRINTLN(deltaVelocity_sp_filtered);
 	
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINTLN(kalmanFilter_x.get_rateBias());
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINTLN(cv_M1_pwm);
