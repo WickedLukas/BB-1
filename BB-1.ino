@@ -15,7 +15,7 @@
 #include "LiquidCrystal_I2C.h"
 
 #include "ema_filter.h"
-#include "complementary_filter.h"
+//#include "complementary_filter.h"
 #include "kalman_filter.h"
 #include "PID_controller.h"
 
@@ -59,19 +59,19 @@ const float RAD2DEG = 4068 / 71;
 const float G = 9811;
 
 // configuration for digital low pass filter
-const char DLPF_MODE = MPU6050_DLPF_BW_42;
+const char DLPF_MODE = MPU6050_DLPF_BW_188;
 
 // configuration for an exponential moving average filter used to filter the BB-1 velocity, calculated from the wheel encoder values
 const float EMA_ALPHA_VELOCITY = 0.03;	// 0.03, 0.04
 
 // configuration for an exponential moving average filter used to filter the BB-1 delta velocity, calculated from the wheel encoder values
-const float EMA_ALPHA_DELTAVELOCITY = 0.3;	// 0.4
+const float EMA_ALPHA_DELTAVELOCITY = 0.3;	// 0.3, 0.4
 
 // configuration for an exponential moving average filter used to filter the velocity setpoint received from the BB-1 remote
 const float EMA_ALPHA_VELOCITY_SP = 0.01;	// 0.01
 
 // configuration for an exponential moving average filter used to filter the delta velocity setpoint received from the BB-1 remote
-const float EMA_ALPHA_DELTAVELOCITY_SP = 0.1;
+const float EMA_ALPHA_DELTAVELOCITY_SP = 0.1; // 0.1
 
 // sample rate = gyroscope output rate / (1 + SAMPLE_RATE_DIVIDER)
 // gyroscope output rate is 8kHz for DLPF_MODE MPU6050_DLPF_BW_256 else 1 kHz
@@ -121,7 +121,7 @@ const float VELOCITY_MAX = PI * MOTOR_RPM * TIRE_DIAMETER / 60;
 const float VELOCITY_LIMIT = 0.5 * VELOCITY_MAX;
 
 // maximum allowed delta velocity for BB-1
-const float DELTA_VELOCITY_LIMIT = VELOCITY_LIMIT / 4;
+const float DELTA_VELOCITY_LIMIT = 0.25 * VELOCITY_LIMIT;
 
 // MPU raw measurements
 int16_t ax, ay, az;
@@ -142,19 +142,19 @@ KalmanFilter kalmanFilter_x(10000, 10000000000, 0.0000000001, 250000, 0.00000001
 boolean tunePID = false;
 
 // PID values for angle controller (will only be used when tunePID flag is set)
-float P_angle = 10;		// 10, 8
-float I_angle = 0;		// 0
-float D_angle = 0.4;	// 0.4, 0.4
+float P_angle = 10;		// 10, 11, 8
+float I_angle = 0;		// 0, 0, 0
+float D_angle = 0.4;	// 0.4, 0.44, 0.4
 
 // PID values for velocity controller
-float P_velocity = 0.04;	// 0.04, 0.035
-float I_velocity = 0;		// 0.03, 0.03
-float D_velocity = 0;		// 0
+float P_velocity = 0.044;	// 0.044, 0.04, 0.04
+float I_velocity = 0;		// 0, 0, 0.03
+float D_velocity = 0;		// 0, 0, 0
 
 // PID values for delta velocity controller
-float P_deltaVelocity = 0.7;	// 0.175, 0.7
-float I_deltaVelocity = 3;	// 0.1, 3.0
-float D_deltaVelocity = 0.005;	// 0.00125, 0.005 tested with EMA_ALPHA_VELOCITY = 0.4
+float P_deltaVelocity = 0.7;	// 0.7
+float I_deltaVelocity = 3;		// 3
+float D_deltaVelocity = 0.005;	// 0.005 tested with EMA_ALPHA_VELOCITY = 0.4
 
 // PID controller classes for angle (mpu) and velocity (encoder)
 PID_controller pid_angle_x(P_angle, I_angle, D_angle, 0, 0, 255);
@@ -621,8 +621,7 @@ void loop() {
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	// SERIAL DEBUG
 	//--------------------------------------------------------------------------------------------------------------------------------------------
-
-	//DEBUG_PRINT(ax); DEBUG_PRINT("\t"); DEBUG_PRINT(ay); DEBUG_PRINT("\t"); DEBUG_PRINTLN(az);
+	
 	//DEBUG_PRINT(ax); DEBUG_PRINT("\t"); DEBUG_PRINT(ay); DEBUG_PRINT("\t"); DEBUG_PRINTLN(az);
 	//DEBUG_PRINT(gx); DEBUG_PRINT("\t"); DEBUG_PRINT(gy); DEBUG_PRINT("\t"); DEBUG_PRINTLN(gz);
 	
@@ -655,7 +654,7 @@ void loop() {
 	
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(angle_x_sp); DEBUG_PRINT("\t"); DEBUG_PRINT(velocity_filtered/100); DEBUG_PRINT("\t"); DEBUG_PRINTLN(mv_M/10);
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_sp);
-	DEBUG_PRINT(deltaVelocity); DEBUG_PRINT("\t"); DEBUG_PRINTLN(deltaVelocity_sp_filtered);
+	//DEBUG_PRINT(deltaVelocity); DEBUG_PRINT("\t"); DEBUG_PRINTLN(deltaVelocity_sp_filtered);
 	
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINTLN(kalmanFilter_x.get_rateBias());
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINTLN(cv_M1_pwm);
@@ -870,10 +869,10 @@ void sensor_update() {
 
 // calculate velocities
 void calc_velocities(float& velocity_M1, float& velocity_M2) {
-	static const float TEMP = (float) TIRE_DIAMETER * PI;
+	static const float TEMP = (float) TIRE_DIAMETER * PI / ENCODER_RESOLUTION;
 	static float temp;
 	
-	temp = TEMP / (dT * ENCODER_RESOLUTION);
+	temp = TEMP / dT;
 	
 	velocity_M1 = enc_count_M1 * temp;
 	velocity_M2 = enc_count_M2 * temp;

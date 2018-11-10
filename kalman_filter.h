@@ -13,7 +13,6 @@ class KalmanFilter {
 	
 	//variables
 	private:
-	
 	// proportionality values for Q (model error covariance)
 	float qp_angle, qp_rate, qp_rateBias;
 
@@ -56,14 +55,12 @@ class KalmanFilter {
 	float k1, k2, k3, k4, k5, k6;
 
 
-	//functions
+	// functions
 	private:
-
 	// calculates the model error covariance with the current dT
 	void calc_Q(float dT, float dT2);
 	
 	public:
-	
 	// constructor
 	KalmanFilter(float qp_angle_new, float qp_rate_new, float qp_rateBias_new, float r_acc_new, float r_gyro_new, float angle_new);
 	
