@@ -4,7 +4,7 @@
 * Created: 05.11.2016
 * Author: Lukas
 *
-* Based on I2C device class (I2Cdev) and MPU6050 class by Jeff Rowberg (Arduino)
+* Using I2C device class (I2Cdev) and MPU6050 class by Jeff Rowberg (Arduino)
 *
 */
 
@@ -415,10 +415,10 @@ void loop() {
 	rate_z_gyro = gz / GYRO_SENS;
 	*/
 	
-	// Kalman filtered angles
+	// Kalman filtered x angle
 	static float angle_x_KF;
 
-	// calculate Kalman filtered x and y angles
+	// calculate Kalman filtered x angle
 	angle_x_KF = kalmanFilter_x.get_angle(dT, rate_x_gyro, angle_x);
 	
 	// KALMAN FILTER
@@ -782,7 +782,8 @@ void velocity_sp_update(char* receivedChars, int16_t& velocity_sp, int16_t& delt
 		// get y data
 		strtokIndx = strtok(NULL, ",");
 		y = atoi(strtokIndx);
-		
+
+		// TODO: checking for x and y being bigger or smaller than zero, might be unnecassary
 		// update velocity setpoint
 		if (x <= 0) {
 			velocity_sp = map(x, -128, 0, -VELOCITY_LIMIT, 0);
