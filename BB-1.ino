@@ -132,6 +132,8 @@ int16_t gx0, gy0, gz0;
 
 // encoder raw measurements
 int16_t enc_count_M1, enc_count_M2;
+// ultrasonic measurements in cm
+uint8_t front_distance, rear_distance;
 
 // Kalman filter class
 // parameters: qp_angle, qp_rate, qp_rateBias, r_acc, r_gyro, angle
@@ -626,6 +628,7 @@ void loop() {
 	//DEBUG_PRINT(gx); DEBUG_PRINT("\t"); DEBUG_PRINT(gy); DEBUG_PRINT("\t"); DEBUG_PRINTLN(gz);
 	
 	//DEBUG_PRINT(enc_count_M1); DEBUG_PRINT("\t"); DEBUG_PRINTLN(enc_count_M2);
+	//DEBUG_PRINT(front_distance); DEBUG_PRINT("\t"); DEBUG_PRINTLN(rear_distance);
 	
 	//DEBUG_PRINT(test_M); DEBUG_PRINT("\t"); DEBUG_PRINT(test_deltaM);  DEBUG_PRINT("\t"); DEBUG_PRINTLN(test_M + test_deltaM);
 	//DEBUG_PRINT(velocity_M1_filtered); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_M2_filtered);
@@ -825,13 +828,17 @@ void sensor_update() {
 		// read raw accel/gyro values
 		mpu.getMotion6(&ax0, &ay0, &az0, &gx0, &gy0, &gz0);
 		
-		// request two encoder counts (2 * 2 byte) from slave device
-		Wire.requestFrom(SLAVE_ADDRESS, 4);
-		// read encoder message
+		// request message from slave device
+		Wire.requestFrom(SLAVE_ADDRESS, 6);
+		// read two encoder counts (2 * 2 byte)
 		enc_message[0] = Wire.read();
 		enc_message[1] = Wire.read();
 		enc_message[2] = Wire.read();
 		enc_message[3] = Wire.read();
+		// read distance from two ultrasonic sensors in cm (2 * 1 byte)
+		front_distance = Wire.read();
+		rear_distance = Wire.read();
+		
 		// get encoder counts
 		enc_count_M1 = (enc_message[0] << 8) | enc_message[1];
 		enc_count_M2 = (enc_message[2] << 8) | enc_message[3];
@@ -850,13 +857,17 @@ void sensor_update() {
 	// read raw accel/gyro values
 	mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
 	
-	// request two encoder counts (2 * 2 byte) from slave device
-	Wire.requestFrom(SLAVE_ADDRESS, 4);
-	// read encoder message
+	// request message from slave device
+	Wire.requestFrom(SLAVE_ADDRESS, 6);
+	// read two encoder counts (2 * 2 byte)
 	enc_message[0] = Wire.read();
 	enc_message[1] = Wire.read();
 	enc_message[2] = Wire.read();
 	enc_message[3] = Wire.read();
+	// read distance from two ultrasonic sensors in cm (2 * 1 byte)
+	front_distance = Wire.read();
+	rear_distance = Wire.read();
+			
 	// get encoder counts
 	enc_count_M1 = (enc_message[0] << 8) | enc_message[1];
 	enc_count_M2 = (enc_message[2] << 8) | enc_message[3];
