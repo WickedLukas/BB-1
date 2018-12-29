@@ -141,7 +141,7 @@ uint8_t front_distance, rear_distance;
 KalmanFilter kalmanFilter_x(10000, 10000000000, 0.0000000001, 250000, 0.00000001, 0);	// for dT = 0.07s; (10000, 10000000000, 0.0000000001, 250000, 0.00000001, 0);
 
 // turn on PID tuning with potentiometers
-boolean tunePID = false;
+//boolean tunePID = false;
 
 // PID values for angle controller (will only be used when tunePID flag is set)
 float P_angle = 10;		// 10, 11, 8
@@ -211,7 +211,7 @@ void calc_gyroAngles(float& angle_x_gyro, float& angle_y_gyro, float& angle_z_gy
 // calculate x angle of BB1 in degrees, which, compared to accel x angle, is corrected by the error caused by BB-1 acceleration
 void calc_angleX(float angle_x_accel, float velocity, float& angle_x);
 
-// print display
+// print display (mode 1: PID; mode 2: velocity, angle, dt; mode 3: velocity, angle, distance)
 void printDisplay(boolean refresh, int8_t mode, float velocity_M1, float velocity_M2, float angle_x_KF);
 
 // calibrate MPU
@@ -411,11 +411,6 @@ void loop() {
 	// gyro rates
 	static float rate_x_gyro;
 	rate_x_gyro = gx / GYRO_SENS;
-	/*
-	static float rate_y_gyro, rate_z_gyro;
-	rate_y_gyro = gy / GYRO_SENS;
-	rate_z_gyro = gz / GYRO_SENS;
-	*/
 	
 	// Kalman filtered x angle
 	static float angle_x_KF;
@@ -426,12 +421,7 @@ void loop() {
 	// KALMAN FILTER
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	
-	//--------------------------------------------------------------------------------------------------------------------------------------------
-	// MADGWICK FILTER
-	// ... TODO ...
-	// MADGWICK FILTER
-	//--------------------------------------------------------------------------------------------------------------------------------------------
-	
+	/*
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	// ONLINE PID TUNING
 	
@@ -448,6 +438,7 @@ void loop() {
 	
 	// ONLINE PID TUNING
 	//--------------------------------------------------------------------------------------------------------------------------------------------
+	*/
 	
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	// NAVIGATION
@@ -458,15 +449,39 @@ void loop() {
 	static int16_t deltaVelocity_sp = 0;
 	// receive update from BB-1 remote
 	remote_update(velocity_sp, deltaVelocity_sp);
-
-	/*
-	// make sure maximum velocity is not exceeded when turning
-	static int16_t temp_limit;
-	temp_limit = VELOCITY_LIMIT - abs(round(deltaVelocity_sp));
-	velocity_sp = constrain(velocity_sp, -temp_limit, temp_limit);
-	temp_limit = VELOCITY_LIMIT - abs(round(velocity));
-	deltaVelocity_sp = constrain(deltaVelocity_sp, -temp_limit, temp_limit);
-	*/
+	
+	// emergency braking status
+	static boolean emergency_braking_front = false;
+	static boolean emergency_braking_rear = false;
+	// stay in emergency braking status until BB-1 has stopped (velocity_filtered < 200 mm/s)
+	if (emergency_braking_front || emergency_braking_rear) {
+		if (velocity_filtered < 200) {
+			emergency_braking_front = false;
+			emergency_braking_rear = false;
+		}
+	}
+	
+	// minimal distance from detected objects in cm
+	static uint8_t min_distance = 70;
+	// check min_distance and initiate emergency braking, if necessary in order to avoid a collision
+	if (emergency_braking_front || ((front_distance <= min_distance) && (velocity_sp > -100))) {
+		emergency_braking_front = true;
+		if (velocity_filtered > 0.6 * VELOCITY_LIMIT) {
+			velocity_sp = -0.6 * VELOCITY_LIMIT;
+		}
+		else {
+			velocity_sp = 0;
+		}
+	}
+	if (emergency_braking_rear || ((rear_distance <= min_distance) && (velocity_sp < 100))) {
+		emergency_braking_rear = true;
+		if (velocity_filtered < -0.6 * VELOCITY_LIMIT) {
+			velocity_sp = 0.6 * VELOCITY_LIMIT;
+		}
+		else {
+			velocity_sp = 0;
+		}
+	}
 	
 	// EMA filtered velocity setpoint
 	static float velocity_sp_filtered = velocity_sp;
@@ -480,7 +495,6 @@ void loop() {
 	
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINT(rate_x_gyro); DEBUG_PRINT("\t"); DEBUG_PRINTLN(kalmanFilter_x.get_rateBias());
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINT(rate_x_gyro); DEBUG_PRINT("\t"); DEBUG_PRINTLN(angle_x_accel);
-
   
 	static boolean failsafe = false;
 	// enter failsafe if angle is too high
@@ -501,7 +515,7 @@ void loop() {
 		}
 		
 		// print display with PID values
-		printDisplay(refresh, 2, velocity_M1, velocity_M2, angle_x_KF);
+		printDisplay(refresh, 1, velocity_M1, velocity_M2, angle_x_KF);
 		
 		return;
 	}
@@ -513,13 +527,13 @@ void loop() {
 			refresh = true;
 			
 			// print display with sensor values
-			printDisplay(refresh, 1, velocity_M1, velocity_M2, angle_x_KF);
+			printDisplay(refresh, 3, velocity_M1, velocity_M2, angle_x_KF);
 			
 			return;
 		}
 		
 		// print display with sensor values
-		printDisplay(first, 1, velocity_M1, velocity_M2, angle_x_KF);
+		printDisplay(first, 3, velocity_M1, velocity_M2, angle_x_KF);
 	}
 
 	
@@ -932,7 +946,7 @@ void calc_angleX(float angle_x_accel, float velocity, float& angle_x) {
 	velocity_old = velocity;
 }
 
-// print display
+// print display (mode 1: PID; mode 2: velocity, angle, dt; mode 3: velocity, angle, distance)
 void printDisplay(boolean refresh, int8_t mode, float velocity_M1, float velocity_M2, float angle_x_KF) {
 	static const int32_t LCD_REFRESH_TIME = 500000;
 	static int32_t LCD_time = 0;
@@ -942,50 +956,74 @@ void printDisplay(boolean refresh, int8_t mode, float velocity_M1, float velocit
 	// print menu
 	if (refresh) {
 		lcd.clear();
-		switch (mode)
-		{
+		switch (mode) {
 			case 1:
-			lcd.setCursor (0, 0);
-			lcd.print("        BB-1        ");
-			lcd.setCursor (0, 1);
-			lcd.print("v:");
-			lcd.setCursor (7, 1);
-			lcd.print(".");
-			lcd.setCursor (12, 1);
-			lcd.print(".");
-			lcd.setCursor (17, 1);
-			lcd.print("m/s");
-			lcd.setCursor (0, 2);
-			lcd.print("a:");
-			lcd.setCursor (7, 2);
-			lcd.print(".");
-			lcd.setCursor (17, 2);
-			lcd.print((char)223);
-			lcd.setCursor (0, 3);
-			lcd.print("dt:");
-			lcd.setCursor (7, 3);
-			lcd.print(".");
-			lcd.setCursor (17, 3);
-			lcd.print("ms");
-			break;
+				lcd.setCursor (0, 0);
+				lcd.print("        BB-1        ");
+				lcd.setCursor (0, 1);
+				lcd.print("P:");
+				lcd.setCursor (5, 1);
+				lcd.print(".");
+				lcd.setCursor (0, 2);
+				lcd.print("I:");
+				lcd.setCursor (5, 2);
+				lcd.print(".");
+				lcd.setCursor (0, 3);
+				lcd.print("D:");
+				lcd.setCursor (5, 3);
+				lcd.print(".");
+				break;
+				
 			case 2:
-			lcd.setCursor (0, 0);
-			lcd.print("        BB-1        ");
-			lcd.setCursor (0, 1);
-			lcd.print("P:");
-			lcd.setCursor (5, 1);
-			lcd.print(".");
-			lcd.setCursor (0, 2);
-			lcd.print("I:");
-			lcd.setCursor (5, 2);
-			lcd.print(".");
-			lcd.setCursor (0, 3);
-			lcd.print("D:");
-			lcd.setCursor (5, 3);
-			lcd.print(".");
-			break;
+				lcd.setCursor (0, 0);
+				lcd.print("        BB-1        ");
+				lcd.setCursor (0, 1);
+				lcd.print("v:");
+				lcd.setCursor (7, 1);
+				lcd.print(".");
+				lcd.setCursor (12, 1);
+				lcd.print(".");
+				lcd.setCursor (17, 1);
+				lcd.print("m/s");
+				lcd.setCursor (0, 2);
+				lcd.print("a:");
+				lcd.setCursor (7, 2);
+				lcd.print(".");
+				lcd.setCursor (17, 2);
+				lcd.print((char)223);
+				lcd.setCursor (0, 3);
+				lcd.print("dt:");
+				lcd.setCursor (7, 3);
+				lcd.print(".");
+				lcd.setCursor (17, 3);
+				lcd.print("ms");
+				break;
+				
+			case 3:
+				lcd.setCursor (0, 0);
+				lcd.print("        BB-1        ");
+				lcd.setCursor (0, 1);
+				lcd.print("v:");
+				lcd.setCursor (7, 1);
+				lcd.print(".");
+				lcd.setCursor (12, 1);
+				lcd.print(".");
+				lcd.setCursor (17, 1);
+				lcd.print("m/s");
+				lcd.setCursor (0, 2);
+				lcd.print("a:");
+				lcd.setCursor (7, 2);
+				lcd.print(".");
+				lcd.setCursor (17, 2);
+				lcd.print((char)223);
+				lcd.setCursor (0, 3);
+				lcd.print("d:");
+				lcd.setCursor (17, 3);
+				lcd.print("cm");
+				break;
+				
 			default:
-			break;
+				break;
 		}
 		
 		// reset interrupt status
@@ -996,96 +1034,154 @@ void printDisplay(boolean refresh, int8_t mode, float velocity_M1, float velocit
 	// print values
 	if (LCD_time >= LCD_REFRESH_TIME) {
 		LCD_time = 0;
-		switch (mode)
-		{
+		switch (mode) {
 			case 1:
-			lcd.setCursor (5, 1);
-			LCD_temp2 = round(velocity_M1 * 0.01);
-			LCD_temp1 = abs(LCD_temp2 / 10);
-			LCD_temp2 = abs(LCD_temp2 % 10);
-			if (velocity_M1 >= 0) {
-				lcd.print(" ");
-			}
-			else {
-				lcd.print("-");
-			}
-			lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
-			
-			lcd.setCursor (10, 1);
-			LCD_temp2 = round(velocity_M2 * 0.01);
-			LCD_temp1 = abs(LCD_temp2 / 10);
-			LCD_temp2 = abs(LCD_temp2 % 10);
-			if (velocity_M2 >= 0) {
-				lcd.print(" ");
-			}
-			else {
-				lcd.print("-");
-			}
-			lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
-			
-			lcd.setCursor (3, 2);
-			LCD_temp2 = round(angle_x_KF * 10);
-			LCD_temp1 = abs(LCD_temp2 / 10);
-			LCD_temp2 = abs(LCD_temp2 % 10);
-			if (LCD_temp1 < 100) {
-				lcd.print(" ");
+				lcd.setCursor (3, 1);
+				LCD_temp2 = round(P_angle * 10);
+				LCD_temp1 = LCD_temp2 / 10;
+				LCD_temp2 = LCD_temp2 % 10;
 				if (LCD_temp1 < 10) {
 					lcd.print(" ");
 				}
-			}
-			if (angle_x_KF >= 0) {
-				lcd.print(" ");
-			}
-			else {
-				lcd.print("-");
-			}
-			lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
+				lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
 			
-			lcd.setCursor (5, 3);
-			LCD_temp2 = round(dt * 0.01);
-			LCD_temp1 = abs(LCD_temp2 / 10);
-			LCD_temp2 = abs(LCD_temp2 % 10);
-			if (LCD_temp1 < 10) {
-				lcd.print(" ");
-			}
-			lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
-
-			break;
+				lcd.setCursor (3, 2);
+				LCD_temp2 = round(I_angle * 10);
+				LCD_temp1 = LCD_temp2 / 10;
+				LCD_temp2 = LCD_temp2 % 10;
+				if (LCD_temp1 < 10) {
+					lcd.print(" ");
+				}
+				lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
 			
+				lcd.setCursor (4, 3);
+				LCD_temp2 = round(D_angle * 100);
+				LCD_temp1 = LCD_temp2 / 100;
+				LCD_temp2 = LCD_temp2 % 100;
+				lcd.print(LCD_temp1); lcd.moveCursorRight();
+				if (LCD_temp2 < 10) {
+					lcd.print("0");
+				}
+				lcd.print(LCD_temp2);
+				break;
+				
 			case 2:
-			lcd.setCursor (3, 1);
-			LCD_temp2 = round(P_angle * 10);
-			LCD_temp1 = LCD_temp2 / 10;
-			LCD_temp2 = LCD_temp2 % 10;
-			if (LCD_temp1 < 10) {
-				lcd.print(" ");
-			}
-			lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
+				lcd.setCursor (5, 1);
+				LCD_temp2 = round(velocity_M1 * 0.01);
+				LCD_temp1 = abs(LCD_temp2 / 10);
+				LCD_temp2 = abs(LCD_temp2 % 10);
+				if (velocity_M1 >= 0) {
+					lcd.print(" ");
+				}
+				else {
+					lcd.print("-");
+				}
+				lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
 			
-			lcd.setCursor (3, 2);
-			LCD_temp2 = round(I_angle * 10);
-			LCD_temp1 = LCD_temp2 / 10;
-			LCD_temp2 = LCD_temp2 % 10;
-			if (LCD_temp1 < 10) {
-				lcd.print(" ");
-			}
-			lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
+				lcd.setCursor (10, 1);
+				LCD_temp2 = round(velocity_M2 * 0.01);
+				LCD_temp1 = abs(LCD_temp2 / 10);
+				LCD_temp2 = abs(LCD_temp2 % 10);
+				if (velocity_M2 >= 0) {
+					lcd.print(" ");
+				}
+				else {
+					lcd.print("-");
+				}
+				lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
 			
-			lcd.setCursor (4, 3);
-			LCD_temp2 = round(D_angle * 100);
-			LCD_temp1 = LCD_temp2 / 100;
-			LCD_temp2 = LCD_temp2 % 100;
-			lcd.print(LCD_temp1); lcd.moveCursorRight();
-			if (LCD_temp2 < 10) {
-				lcd.print("0");
-			}
-			lcd.print(LCD_temp2);
+				lcd.setCursor (3, 2);
+				LCD_temp2 = round(angle_x_KF * 10);
+				LCD_temp1 = abs(LCD_temp2 / 10);
+				LCD_temp2 = abs(LCD_temp2 % 10);
+				if (LCD_temp1 < 100) {
+					lcd.print(" ");
+					if (LCD_temp1 < 10) {
+						lcd.print(" ");
+					}
+				}
+				if (angle_x_KF >= 0) {
+					lcd.print(" ");
+				}
+				else {
+					lcd.print("-");
+				}
+				lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
 			
-			break;
+				lcd.setCursor (5, 3);
+				LCD_temp2 = round(dt * 0.01);
+				LCD_temp1 = abs(LCD_temp2 / 10);
+				LCD_temp2 = abs(LCD_temp2 % 10);
+				if (LCD_temp1 < 10) {
+					lcd.print(" ");
+				}
+				lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
+				break;
+
+			case 3:
+				lcd.setCursor (5, 1);
+				LCD_temp2 = round(velocity_M1 * 0.01);
+				LCD_temp1 = abs(LCD_temp2 / 10);
+				LCD_temp2 = abs(LCD_temp2 % 10);
+				if (velocity_M1 >= 0) {
+					lcd.print(" ");
+				}
+				else {
+					lcd.print("-");
+				}
+				lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
 			
+				lcd.setCursor (10, 1);
+				LCD_temp2 = round(velocity_M2 * 0.01);
+				LCD_temp1 = abs(LCD_temp2 / 10);
+				LCD_temp2 = abs(LCD_temp2 % 10);
+				if (velocity_M2 >= 0) {
+					lcd.print(" ");
+				}
+				else {
+					lcd.print("-");
+				}
+				lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
+			
+				lcd.setCursor (3, 2);
+				LCD_temp2 = round(angle_x_KF * 10);
+				LCD_temp1 = abs(LCD_temp2 / 10);
+				LCD_temp2 = abs(LCD_temp2 % 10);
+				if (LCD_temp1 < 100) {
+					lcd.print(" ");
+					if (LCD_temp1 < 10) {
+						lcd.print(" ");
+					}
+				}
+				if (angle_x_KF >= 0) {
+					lcd.print(" ");
+				}
+				else {
+					lcd.print("-");
+				}
+				lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
+			
+				lcd.setCursor (6, 3);
+				if (front_distance < 10) {
+					lcd.print("  ");
+				}
+				else if (front_distance < 100) {
+					lcd.print(" ");
+				}
+				lcd.print(front_distance);
+				
+				lcd.setCursor (11, 3);
+				if (rear_distance < 10) {
+					lcd.print("  ");
+				}
+				else if (rear_distance < 100) {
+					lcd.print(" ");
+				}
+				lcd.print(rear_distance);
+				break;
+				
 			default:
-			
-			break;
+				break;
 		}
 	}
 	else {
