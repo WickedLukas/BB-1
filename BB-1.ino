@@ -211,8 +211,8 @@ void calc_gyroAngles(float& angle_x_gyro, float& angle_y_gyro, float& angle_z_gy
 // calculate x angle of BB1 in degrees, which, compared to accel x angle, is corrected by the error caused by BB-1 acceleration
 void calc_angleX(float angle_x_accel, float velocity, float& angle_x);
 
-// print display (mode 1: PID; mode 2: velocity, angle, dt; mode 3: velocity, angle, distance)
-void printDisplay(boolean refresh, int8_t mode, float velocity_M1, float velocity_M2, float angle_x_KF);
+// print display (mode 1: PID; mode 2: average velocity, angle, dt; mode 3: average velocity, angle, minimal distance)
+void printDisplay(boolean refresh, int8_t mode, float velocity, float angle_x_KF);
 
 // calibrate MPU
 void calibMotion6(int16_t num, int16_t accuracy_accel, int16_t accuracy_gyro);
@@ -453,29 +453,29 @@ void loop() {
 	// emergency braking status
 	static boolean emergency_braking_front = false;
 	static boolean emergency_braking_rear = false;
-	// stay in emergency braking status until BB-1 has stopped (velocity_filtered < 200 mm/s)
+	// stay in emergency braking status until BB-1 has stopped in balance position (velocity < 200 mm/s and angle < 3°)
 	if (emergency_braking_front || emergency_braking_rear) {
-		if (velocity_filtered < 200) {
+		if ((velocity < 200) && (angle_x_KF < 3)) {
 			emergency_braking_front = false;
 			emergency_braking_rear = false;
 		}
 	}
 	
-	// minimal distance from detected objects in cm
-	static uint8_t min_distance = 70;
+	// minimal allowed distance from detected objects in cm
+	static const uint8_t min_distance = 70;
 	// check min_distance and initiate emergency braking, if necessary in order to avoid a collision
-	if (emergency_braking_front || ((front_distance <= min_distance) && (velocity_sp > -100))) {
+	if (emergency_braking_front || ((front_distance < min_distance) && (velocity_sp > -200))) {
 		emergency_braking_front = true;
-		if (velocity_filtered > 0.6 * VELOCITY_LIMIT) {
+		if (velocity > 0.6 * VELOCITY_LIMIT) {
 			velocity_sp = -0.6 * VELOCITY_LIMIT;
 		}
 		else {
 			velocity_sp = 0;
 		}
 	}
-	if (emergency_braking_rear || ((rear_distance <= min_distance) && (velocity_sp < 100))) {
+	if (emergency_braking_rear || ((rear_distance < min_distance) && (velocity_sp < 200))) {
 		emergency_braking_rear = true;
-		if (velocity_filtered < -0.6 * VELOCITY_LIMIT) {
+		if (velocity < -0.6 * VELOCITY_LIMIT) {
 			velocity_sp = 0.6 * VELOCITY_LIMIT;
 		}
 		else {
@@ -515,7 +515,7 @@ void loop() {
 		}
 		
 		// print display with PID values
-		printDisplay(refresh, 1, velocity_M1, velocity_M2, angle_x_KF);
+		printDisplay(refresh, 1, velocity, angle_x_KF);
 		
 		return;
 	}
@@ -527,13 +527,13 @@ void loop() {
 			refresh = true;
 			
 			// print display with sensor values
-			printDisplay(refresh, 3, velocity_M1, velocity_M2, angle_x_KF);
+			printDisplay(refresh, 3, velocity, angle_x_KF);
 			
 			return;
 		}
 		
 		// print display with sensor values
-		printDisplay(first, 3, velocity_M1, velocity_M2, angle_x_KF);
+		printDisplay(first, 3, velocity, angle_x_KF);
 	}
 
 	
@@ -647,7 +647,7 @@ void loop() {
 	//DEBUG_PRINT(test_M); DEBUG_PRINT("\t"); DEBUG_PRINT(test_deltaM);  DEBUG_PRINT("\t"); DEBUG_PRINTLN(test_M + test_deltaM);
 	//DEBUG_PRINT(velocity_M1_filtered); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_M2_filtered);
 	
-	//DEBUG_PRINT((velocity_M1 + velocity_M2) * 0.5); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_filtered);
+	//DEBUG_PRINT(velocity); DEBUG_PRINT("\t"); DEBUG_PRINTLN(velocity_filtered);
 	
 	//DEBUG_PRINT(angle_x_KF); DEBUG_PRINT("\t"); DEBUG_PRINT(kalmanFilter_x.get_rate()); DEBUG_PRINT("\t"); DEBUG_PRINT(rate_x_gyro); DEBUG_PRINT("\t"); DEBUG_PRINTLN(kalmanFilter_x.get_rateBias());
 	
@@ -800,22 +800,11 @@ void velocity_sp_update(char* receivedChars, int16_t& velocity_sp, int16_t& delt
 		strtokIndx = strtok(NULL, ",");
 		y = atoi(strtokIndx);
 
-		// TODO: checking for x and y being bigger or smaller than zero, might be unnecassary
 		// update velocity setpoint
-		if (x <= 0) {
-			velocity_sp = map(x, -128, 0, -VELOCITY_LIMIT, 0);
-		}
-		else {
-			velocity_sp = map(x, 0, 127, 0, VELOCITY_LIMIT);
-		}
+		velocity_sp = map(x, -127, 127, -VELOCITY_LIMIT, VELOCITY_LIMIT);
 		
 		// update delta velocity setpoint
-		if (y <= 0) {
-			deltaVelocity_sp = map(y, -128, 0, DELTA_VELOCITY_LIMIT, 0);
-		}
-		else {
-			deltaVelocity_sp = map(y, 0, 127, 0, -DELTA_VELOCITY_LIMIT);
-		}
+		deltaVelocity_sp = map(y, -127, 127, DELTA_VELOCITY_LIMIT, -DELTA_VELOCITY_LIMIT);
 	}
 }
 
@@ -946,8 +935,8 @@ void calc_angleX(float angle_x_accel, float velocity, float& angle_x) {
 	velocity_old = velocity;
 }
 
-// print display (mode 1: PID; mode 2: velocity, angle, dt; mode 3: velocity, angle, distance)
-void printDisplay(boolean refresh, int8_t mode, float velocity_M1, float velocity_M2, float angle_x_KF) {
+// print display (mode 1: PID; mode 2: average velocity, angle, dt; mode 3: average velocity, angle, minimal distance)
+void printDisplay(boolean refresh, int8_t mode, float velocity, float angle_x_KF) {
 	static const int32_t LCD_REFRESH_TIME = 500000;
 	static int32_t LCD_time = 0;
 	
@@ -981,8 +970,6 @@ void printDisplay(boolean refresh, int8_t mode, float velocity_M1, float velocit
 				lcd.print("v:");
 				lcd.setCursor (7, 1);
 				lcd.print(".");
-				lcd.setCursor (12, 1);
-				lcd.print(".");
 				lcd.setCursor (17, 1);
 				lcd.print("m/s");
 				lcd.setCursor (0, 2);
@@ -1005,8 +992,6 @@ void printDisplay(boolean refresh, int8_t mode, float velocity_M1, float velocit
 				lcd.setCursor (0, 1);
 				lcd.print("v:");
 				lcd.setCursor (7, 1);
-				lcd.print(".");
-				lcd.setCursor (12, 1);
 				lcd.print(".");
 				lcd.setCursor (17, 1);
 				lcd.print("m/s");
@@ -1067,22 +1052,10 @@ void printDisplay(boolean refresh, int8_t mode, float velocity_M1, float velocit
 				
 			case 2:
 				lcd.setCursor (5, 1);
-				LCD_temp2 = round(velocity_M1 * 0.01);
+				LCD_temp2 = round(velocity * 0.01);
 				LCD_temp1 = abs(LCD_temp2 / 10);
 				LCD_temp2 = abs(LCD_temp2 % 10);
-				if (velocity_M1 >= 0) {
-					lcd.print(" ");
-				}
-				else {
-					lcd.print("-");
-				}
-				lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
-			
-				lcd.setCursor (10, 1);
-				LCD_temp2 = round(velocity_M2 * 0.01);
-				LCD_temp1 = abs(LCD_temp2 / 10);
-				LCD_temp2 = abs(LCD_temp2 % 10);
-				if (velocity_M2 >= 0) {
+				if (velocity >= 0) {
 					lcd.print(" ");
 				}
 				else {
@@ -1120,22 +1093,10 @@ void printDisplay(boolean refresh, int8_t mode, float velocity_M1, float velocit
 
 			case 3:
 				lcd.setCursor (5, 1);
-				LCD_temp2 = round(velocity_M1 * 0.01);
+				LCD_temp2 = round(velocity * 0.01);
 				LCD_temp1 = abs(LCD_temp2 / 10);
 				LCD_temp2 = abs(LCD_temp2 % 10);
-				if (velocity_M1 >= 0) {
-					lcd.print(" ");
-				}
-				else {
-					lcd.print("-");
-				}
-				lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
-			
-				lcd.setCursor (10, 1);
-				LCD_temp2 = round(velocity_M2 * 0.01);
-				LCD_temp1 = abs(LCD_temp2 / 10);
-				LCD_temp2 = abs(LCD_temp2 % 10);
-				if (velocity_M2 >= 0) {
+				if (velocity >= 0) {
 					lcd.print(" ");
 				}
 				else {
@@ -1160,24 +1121,24 @@ void printDisplay(boolean refresh, int8_t mode, float velocity_M1, float velocit
 					lcd.print("-");
 				}
 				lcd.print(LCD_temp1); lcd.moveCursorRight(); lcd.print(LCD_temp2);
-			
-				lcd.setCursor (6, 3);
-				if (front_distance < 10) {
-					lcd.print("  ");
-				}
-				else if (front_distance < 100) {
-					lcd.print(" ");
-				}
-				lcd.print(front_distance);
 				
-				lcd.setCursor (11, 3);
-				if (rear_distance < 10) {
+				// lowest distance
+				static uint8_t lowest_distance;
+				if (front_distance < rear_distance) {
+					lowest_distance = front_distance;
+				}
+				else {
+					lowest_distance = rear_distance;
+				}
+				
+				lcd.setCursor (6, 3);
+				if (lowest_distance < 10) {
 					lcd.print("  ");
 				}
-				else if (rear_distance < 100) {
+				else if (lowest_distance < 100) {
 					lcd.print(" ");
 				}
-				lcd.print(rear_distance);
+				lcd.print(lowest_distance);
 				break;
 				
 			default:
