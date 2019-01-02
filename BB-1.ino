@@ -316,13 +316,13 @@ void setup() {
 	DEBUG_PRINTLN(F("Calibration completed.\n"));
 	#else
 	// use offsets from previous calibration
-	mpu.setXAccelOffset(-423);  //  -449, -459
-	mpu.setYAccelOffset(2551);  //  2496, 2591
-	mpu.setZAccelOffset(1226);  //  1241, 1216
+	mpu.setXAccelOffset(-436);  //  -449, -459
+	mpu.setYAccelOffset(2529);  //  2496, 2591
+	mpu.setZAccelOffset(1215);  //  1241, 1216
 
-	mpu.setXGyroOffset(23); //  20, 29
-	mpu.setYGyroOffset(34); //  29, 28
-	mpu.setZGyroOffset(27); //  29, 28
+	mpu.setXGyroOffset(19); //  20, 29
+	mpu.setYGyroOffset(35); //  29, 28
+	mpu.setZGyroOffset(23); //  29, 28
 	#endif
 }
 
