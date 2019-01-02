@@ -68,7 +68,7 @@ float KalmanFilter::get_angle(float dT, float rate_new, float angle_new) {
 	
 	// Kalman gain
 	// K = P(k) * H' * (H * P(k) * H' + R)^(-1)
-	det_inverse = 1 / (p1_r_acc * p5_r_gyro - p2p4);
+	det_inverse = 1 / (p1_r_acc * p5_r_gyro - p2p4);	// TODO: Handle division by zero due to numerical issues
 
 	k1 = (p1 * p5_r_gyro - p2p4) * det_inverse;
 	k2 = (p2 * p1_r_acc - p1 * p2) * det_inverse;
