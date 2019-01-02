@@ -12,10 +12,10 @@
 #include "I2Cdev.h"
 #include "MPU6050.h"
 #include "DualMC33926MotorShield.h"
-#include "LiquidCrystal_I2C.h"
+#include "hd44780.h"
+#include "hd44780ioClass/hd44780_I2Cexp.h"
 
 #include "ema_filter.h"
-//#include "complementary_filter.h"
 #include "kalman_filter.h"
 #include "PID_controller.h"
 
@@ -32,10 +32,7 @@
 MPU6050 mpu;
 //MPU6050 mpu(0x69); // <-- use for AD0 high
 
-// set the LCD address to 0x3F for a 20 chars 4 line display and
-// set the pins on the I2C chip used for LCD connections:
-//                    addr, en,rw,rs,d4,d5,d6,d7,bl,blpol
-LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
+hd44780_I2Cexp lcd(0x27);
 
 // address of the Arduino slave reading encoder values
 #define SLAVE_ADDRESS 0x08
@@ -453,7 +450,7 @@ void loop() {
 	// emergency braking status
 	static boolean emergency_braking_front = false;
 	static boolean emergency_braking_rear = false;
-	// stay in emergency braking status until BB-1 has stopped in balance position (velocity < 200 mm/s and angle < 3°)
+	// stay in emergency braking status until BB-1 has stopped in balance position (velocity < 200 mm/s and angle < 3Â°)
 	if (emergency_braking_front || emergency_braking_rear) {
 		if ((velocity < 200) && (angle_x_KF < 3)) {
 			emergency_braking_front = false;
@@ -1021,7 +1018,7 @@ void printDisplay(boolean refresh, int8_t mode, float velocity, float angle_x_KF
 		LCD_time = 0;
 		switch (mode) {
 			case 1:
-				lcd.setCursor (3, 1);
+				lcd.setCursor(3, 1);
 				LCD_temp2 = round(P_angle * 10);
 				LCD_temp1 = LCD_temp2 / 10;
 				LCD_temp2 = LCD_temp2 % 10;
