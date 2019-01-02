@@ -128,7 +128,7 @@ int16_t ax0, ay0, az0;
 int16_t gx0, gy0, gz0;
 
 // encoder raw measurements
-int16_t enc_count_M1, enc_count_M2;
+int8_t enc_count_M1, enc_count_M2;
 // ultrasonic measurements in cm
 uint8_t front_distance, rear_distance;
 
@@ -811,9 +811,6 @@ void sensor_update() {
 	static uint32_t t0 = 0;
 	static uint32_t t = 0;
 	
-	// encoder message
-	static byte enc_message[4];
-	
 	if (first)  {
 		while (!mpuInterrupt) {
 			// wait for the next interrupt
@@ -829,19 +826,13 @@ void sensor_update() {
 		mpu.getMotion6(&ax0, &ay0, &az0, &gx0, &gy0, &gz0);
 		
 		// request message from slave device
-		Wire.requestFrom(SLAVE_ADDRESS, 6);
-		// read two encoder counts (2 * 2 byte)
-		enc_message[0] = Wire.read();
-		enc_message[1] = Wire.read();
-		enc_message[2] = Wire.read();
-		enc_message[3] = Wire.read();
-		// read distance from two ultrasonic sensors in cm (2 * 1 byte)
+		Wire.requestFrom(SLAVE_ADDRESS, 4);
+		// read encoder counts
+		enc_count_M1 = Wire.read();
+		enc_count_M2 = Wire.read();
+		// read distances in cm
 		front_distance = Wire.read();
 		rear_distance = Wire.read();
-		
-		// get encoder counts
-		enc_count_M1 = (enc_message[0] << 8) | enc_message[1];
-		enc_count_M2 = (enc_message[2] << 8) | enc_message[3];
 	}
 	
 	while (!mpuInterrupt) {
@@ -858,19 +849,13 @@ void sensor_update() {
 	mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
 	
 	// request message from slave device
-	Wire.requestFrom(SLAVE_ADDRESS, 6);
-	// read two encoder counts (2 * 2 byte)
-	enc_message[0] = Wire.read();
-	enc_message[1] = Wire.read();
-	enc_message[2] = Wire.read();
-	enc_message[3] = Wire.read();
-	// read distance from two ultrasonic sensors in cm (2 * 1 byte)
+	Wire.requestFrom(SLAVE_ADDRESS, 4);
+	// read encoder counts
+	enc_count_M1 = Wire.read();
+	enc_count_M2 = Wire.read();
+	// read distances in cm
 	front_distance = Wire.read();
 	rear_distance = Wire.read();
-			
-	// get encoder counts
-	enc_count_M1 = (enc_message[0] << 8) | enc_message[1];
-	enc_count_M2 = (enc_message[2] << 8) | enc_message[3];
 
 	dt = (t - t0);				// in us
 	dT = float(dt) * 0.000001;	// in s
