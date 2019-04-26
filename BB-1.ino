@@ -244,7 +244,6 @@ void dataReady() {
 void setup() {
 	// configure Arduino interrupt pin for MPU
 	pinMode(MPU_INTERRUPT_PIN, INPUT);
-	digitalWrite(MPU_INTERRUPT_PIN, HIGH);
 
 	// join I2C bus (I2Cdev library doesn't do this automatically)
 	#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
