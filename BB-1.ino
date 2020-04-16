@@ -50,7 +50,7 @@ const int32_t REMOTE_TIMEOUT = 100000;
 const byte MAX_CHARS = 32;
 
 // factor for converting a radian number to an equivalent number in degrees
-const float RAD2DEG = 4068 / 71;
+const float RAD2DEG = (float) 4068 / 71;
 
 // acceleration of gravity
 const float G = 9811;
