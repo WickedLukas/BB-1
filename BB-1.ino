@@ -156,9 +156,9 @@ float I_deltaVelocity = 3;		// 3
 float D_deltaVelocity = 0.005;	// 0.005 tested with EMA_ALPHA_VELOCITY = 0.4
 
 // PID controller classes for angle (mpu) and velocity (encoder)
-PID_controller pid_angle_x(P_angle, I_angle, D_angle, 0, 0, 255);
-PID_controller pid_velocity_y(P_velocity, I_velocity, D_velocity, 0, 0, ANGLE_LIMIT);
-PID_controller pid_deltaVelocity_y(P_deltaVelocity, I_deltaVelocity, D_deltaVelocity, 0, 0, 255);
+PID_controller pid_angle_x(P_angle, I_angle, D_angle, 0, 0, 255, 255);
+PID_controller pid_velocity_y(P_velocity, I_velocity, D_velocity, 0, 0, ANGLE_LIMIT, ANGLE_LIMIT);
+PID_controller pid_deltaVelocity_y(P_deltaVelocity, I_deltaVelocity, D_deltaVelocity, 0, 0, 255, 255);
 
 // motor controller class
 DualMC33926MotorShield md(11, 9, A0, 8, 10, A1, 4, 12);	// remap M1DIR from pin 7 to pin 11
