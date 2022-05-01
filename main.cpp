@@ -137,10 +137,7 @@ uint8_t front_distance, rear_distance;
 // r_acc can maybe be reduced, to speed up rateBias and angle offset approximation, if angle_x is used for Kalman filter
 KalmanFilter kalmanFilter_x(10000, 10000000000, 0.0000000001, 250000, 0.00000001, 0);	// for dT = 0.07s; (10000, 10000000000, 0.0000000001, 250000, 0.00000001, 0);
 
-// turn on PID tuning with potentiometers
-//boolean tunePID = false;
-
-// PID values for angle controller (will only be used when tunePID flag is set)
+// PID values for angle controller
 float P_angle = 10;		// 10, 11, 8
 float I_angle = 0;		// 0, 0, 0
 float D_angle = 0.4;	// 0.4, 0.44, 0.4
@@ -163,8 +160,7 @@ PID_controller pid_deltaVelocity_y(P_deltaVelocity, I_deltaVelocity, D_deltaVelo
 // motor controller class
 DualMC33926MotorShield md(11, 9, A0, 8, 10, A1, 4, 12);	// remap M1DIR from pin 7 to pin 11
 
-// uncomment "PERFORM_MPU_CALIBRATION" if you want to calibrate the MPU
-//#define PERFORM_MPU_CALIBRATION
+//#define PERFORM_MPU_CALIBRATION	// calibrate the MPU
 
 #define MPU_INTERRUPT_PIN 7
 
@@ -315,12 +311,12 @@ void setup() {
 	DEBUG_PRINTLN(F("Calibration completed.\n"));
 	#else
 	// use offsets from previous calibration
-	mpu.setXAccelOffset(-436);  //  -449, -459
-	mpu.setYAccelOffset(2529);  //  2496, 2591
-	mpu.setZAccelOffset(1215);  //  1241, 1216
+	mpu.setXAccelOffset(-450);  //  -449, -459
+	mpu.setYAccelOffset(2550);  //  2496, 2591
+	mpu.setZAccelOffset(1278);  //  1241, 1216
 
-	mpu.setXGyroOffset(19); //  20, 29
-	mpu.setYGyroOffset(35); //  29, 28
+	mpu.setXGyroOffset(16); //  20, 29
+	mpu.setYGyroOffset(41); //  29, 28
 	mpu.setZGyroOffset(23); //  29, 28
 	#endif
 }
@@ -417,24 +413,6 @@ void loop() {
 	// KALMAN FILTER
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	
-	/*
-	//--------------------------------------------------------------------------------------------------------------------------------------------
-	// ONLINE PID TUNING
-	
-	// use potentiometers to set PID values if PID tuning is enabled
-	if (tunePID) {
-		P_angle = (float) constrain(analogRead(P_PIN) - 100, 0, 900) * 0.1;
-		I_angle = (float) constrain(analogRead(I_PIN) - 100, 0, 900) * 0.1;
-		D_angle = (float) constrain(analogRead(D_PIN) - 100, 0, 900) * 0.01;
-		
-		pid_angle_x.set_K_p(P_angle);
-		pid_angle_x.set_K_i(I_angle);
-		pid_angle_x.set_K_d(D_angle);
-	}
-	
-	// ONLINE PID TUNING
-	//--------------------------------------------------------------------------------------------------------------------------------------------
-	*/
 	
 	//--------------------------------------------------------------------------------------------------------------------------------------------
 	// NAVIGATION
@@ -1141,7 +1119,7 @@ void calibMotion6(int16_t num, int16_t accuracy_accel, int16_t accuracy_gyro) {
 
 	while (1) {
 		step_counter++;
-
+		
 		mpu.setXAccelOffset(offset_ax);
 		mpu.setYAccelOffset(offset_ay);
 		mpu.setZAccelOffset(offset_az);
